@@ -27,20 +27,17 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatService {
     private final MessageService messageService;
-    private final UserChatUpdateService userChatUpdateService;
 
     private final ChatRepository chatRepository;
-    private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final UserChatRepository userChatRepository;
 
-    private final UserIdGenerator userIdGenerator;
     private final ChatIdGenerator chatIdGenerator;
-    private final MessageIdGenerator messageIdGenerator;
     private final UserChatIdGenerator userChatIdGenerator;
 
     // [추가] 이벤트 발행기 주입 -> Kafka로 수정
@@ -165,16 +162,14 @@ public class ChatService {
 
         //private final Map<Long, Set<Long>> chatToUsers
         //private final Map<Long, Long> userToChat
-        String userSessionKey = "userId:" + userId + ":";
+        String userKey = "userId:" + userId + ":state";
         String userIdStr = String.valueOf(userId);
 
         //  이전 방이 있다면 퇴장 처리
         //      사용자의 현재 chatId를 Redis에서 조회
-        String oldChatIdStr = (String) redisTemplate.opsForHash().get(userSessionKey, "chatId");
-        if (oldChatIdStr != null) {
-            Long oldChatId = Long.parseLong(oldChatIdStr);
-            redisTemplate.opsForSet().remove("chatId:" + oldChatId + ":userId", userIdStr);
-        }
+        String oldChatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+        if (oldChatIdStr != null)
+            redisTemplate.opsForSet().remove("chatId:" + oldChatIdStr + ":userId", userIdStr);
 
         //  새로운 방 입장 처리
         String newChatKey = "chatId:" + chatId + ":userId";
@@ -182,7 +177,13 @@ public class ChatService {
         redisTemplate.opsForSet().add(newChatKey, userIdStr);
 
         //  사용자의 현재 참여 채팅방 및 서버 정보 업데이트
-        redisTemplate.opsForHash().put(userSessionKey, "chatId", String.valueOf(chatId));
+        Map<String, String> userState = Map.of(
+                "chatId", String.valueOf(chatId),
+                "serverId", serverIdentifier,
+                "lastActive", LocalDateTime.now().toString()
+        );
+        redisTemplate.opsForHash().putAll(userKey, userState);
+        log.info("[입장] user : {} -> chat : {} 상태 저장 완료", userId, chatId);
 
         /*
             나중에 redis TTL 설정하기!
@@ -235,7 +236,7 @@ public class ChatService {
                 .orElseThrow(() -> new IllegalArgumentException("채팅방 참여 정보를 찾을 수 없습니다."));
         userChat.setDeleted(true);
 
-        String userSessionKey = "userId:" + userId + ":";
+        String userKey = "userId:" + userId + ":state";
         String userIdStr = String.valueOf(userId);
 
         // 사용자가 마지막으로 있었던 채팅방 정보 조회
@@ -248,7 +249,7 @@ public class ChatService {
         }
 
         // 2. 사용자의 세션 정보(Hash)를 완전히 삭제
-        redisTemplate.delete(userSessionKey);
+        redisTemplate.delete(userKey);
 
         // WebSocketHandler 통해 실시간 방송 실행
         // webSocketHandler.broadcastSystemMessage(chatId, systemMessage);
