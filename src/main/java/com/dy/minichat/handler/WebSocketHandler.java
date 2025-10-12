@@ -12,7 +12,6 @@ import com.dy.minichat.service.FcmPushService;
 import com.dy.minichat.service.MessageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.grpc.StatusRuntimeException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -72,14 +71,6 @@ public class WebSocketHandler extends TextWebSocketHandler {
             Long userId = userIdOptional.get();
             String userKey = "user:" + userId + ":state";
 
-            // 로컬 메모리에 세션 저장 (메시지 전송을 위해 필수)
-            userIdToSessionMap.put(userId, session);
-            log.info("[연결 수립] 사용자 ID: {}, 세션 ID: {}", userId, session.getId());
-
-            // [추가] Redis에 "어떤 유저가 / 이 서버에 접속했다"는 정보 저장
-            String redisKey = USER_SERVER_KEY_PREFIX + userId;
-            redisTemplate.opsForValue().set(redisKey, serverIdentifier, 12, TimeUnit.HOURS); // TTL 설정과 함께 저장
-            log.info("[연결 수립] Redis에 사용자 위치 정보 저장. Key: {}, Server: {}", redisKey, serverIdentifier);
             // redis 에서 chatId 조회
             String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
 
