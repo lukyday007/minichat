@@ -1,15 +1,18 @@
 package com.dy.minichat.handler;
 
-import com.dy.minichat.dto.message.WebSocketMessageDTO;
-import com.dy.minichat.dto.request.LastReadMessageRequestDTO;
+import com.dy.minichat.config.id.UndeliveredMessageIdGenerator;
+import com.dy.minichat.dto.message.TalkMessageDTO;
 import com.dy.minichat.dto.request.MessageRequestDTO;
-import com.dy.minichat.entity.Message;
-import com.dy.minichat.repository.UserRepository;
+import com.dy.minichat.entity.UndeliveredMessage;
+import com.dy.minichat.grpc.client.MessageRelayClient;
+import com.dy.minichat.property.GrpcServerProperties;
+import com.dy.minichat.repository.UndeliveredMessageRepository;
 import com.dy.minichat.service.ChatService;
+import com.dy.minichat.service.FcmPushService;
 import com.dy.minichat.service.MessageService;
-import com.dy.minichat.service.UserService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.grpc.StatusRuntimeException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -20,9 +23,10 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
@@ -33,29 +37,18 @@ public class WebSocketHandler extends TextWebSocketHandler {
 
     private final ChatService chatService;
     private final MessageService messageService;
+    private final FcmPushService fcmPushService;
+    private final UndeliveredMessageRepository undeliveredMessageRepository;
+    private final UndeliveredMessageIdGenerator undeliveredMessageIdGenerator;
 
     private final StringRedisTemplate redisTemplate;
     private final String serverIdentifier; // ServerConfig에서 생성된 Bean
     private static final String USER_SERVER_KEY_PREFIX = "ws:user:server:";
 
-    /*
-        [사용자: 채팅방 클릭]
-        |
-        +-----> 1. getMessagesWithUnreadCnt (과거 기록 조회) -> 여기서 수집한 chatId, userId등을 redis로 보냄
-        |
-        +-----> 2. WebSocket 연결 (실시간 통신 준비) -> 여기서 redis를 통해 chatId 받아오기 -> 가능..?
-        |
-        V
-        [앱: 화면에 과거 메시지 표시 & 실시간 수신 대기 상태]
-        |
-        V
-        3. updateLastReadMessage (다 읽었다고 서버에 기록)
-    */
+    private final MessageRelayClient messageRelayClient; // gRPC 클라이언트 주입
+    private final GrpcServerProperties grpcServerProperties; // gRPC 서버 주소록 주입
 
-    // 세션 관리 : (userId -> session) 맵으로 변경
-    // afterConnectionEstablished와 afterConnectionClosed에서 관리
     private final Map<Long, WebSocketSession> userIdToSessionMap = new ConcurrentHashMap<>();
-
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -77,6 +70,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
         // userId가 존재할 경우에만 연결 수립 로직 진행
         if (userIdOptional.isPresent()) {
             Long userId = userIdOptional.get();
+            String userKey = "user:" + userId + ":state";
 
             // 로컬 메모리에 세션 저장 (메시지 전송을 위해 필수)
             userIdToSessionMap.put(userId, session);
@@ -86,6 +80,19 @@ public class WebSocketHandler extends TextWebSocketHandler {
             String redisKey = USER_SERVER_KEY_PREFIX + userId;
             redisTemplate.opsForValue().set(redisKey, serverIdentifier, 12, TimeUnit.HOURS); // TTL 설정과 함께 저장
             log.info("[연결 수립] Redis에 사용자 위치 정보 저장. Key: {}, Server: {}", redisKey, serverIdentifier);
+            // redis 에서 chatId 조회
+            String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+
+            if (chatIdStr != null) {
+                // 로컬 메모리에 세션 저장 (메시지 전송을 위해 필수)
+                userIdToSessionMap.put(userId, session);
+                // [추가] Redis에 "어떤 유저가 / 이 서버에 접속했다"는 정보 저장 및 갱신
+                redisTemplate.opsForHash().put(userKey, "serverId", serverIdentifier);
+                redisTemplate.opsForHash().put(userKey, "lastActive", LocalDateTime.now().toString());
+                log.info("유저 {}가 채팅방 {}에 연결됨, server log = {}", userId, chatIdStr, serverIdentifier);
+            } else {
+                log.warn("유저 {}의 chatId 정보가 없음 — API 미호출 가능성 있음", userId);
+            }
 
         } else {
             try {
@@ -100,21 +107,6 @@ public class WebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
 
-        /*
-            String payload = message.getPayload();
-            log.info("payload: {}", payload);
-
-            for(WebSocketSession ss: sessions) { // creating broadcast server
-                ss.sendMessage(new TextMessage(payload));
-            }
-            String messageType;
-            switch (messageType) {
-                case "send_message":
-                    break;
-                case "sfsdfdsf":
-                    break;
-            }
-        */
         // 세션에서 보낸 사람의 ID를 안전하게 가져오기
         Optional<Long> senderIdOptional = getUserIdFromSession(session);
         if (senderIdOptional.isEmpty()) {
@@ -124,33 +116,45 @@ public class WebSocketHandler extends TextWebSocketHandler {
         Long senderId = senderIdOptional.get();
 
         String payload = message.getPayload();
-        WebSocketMessageDTO webSocketMessageDTO = objectMapper.readValue(payload, WebSocketMessageDTO.class);
-        Long chatId = webSocketMessageDTO.getChatId();
+        TalkMessageDTO talkMessageDTO = objectMapper.readValue(payload, TalkMessageDTO.class);
+        log.info("Received DTO (JSON): {}", objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(talkMessageDTO));
 
-        log.info("Received DTO (JSON): {}", objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(webSocketMessageDTO));
+        Optional<Long> chatIdOpt = getCurrentChatIdForUser(senderId);
+        if (chatIdOpt.isEmpty() || !chatIdOpt.get().equals(talkMessageDTO.getChatId())) {
+            log.warn("[메시지 무시] user:{} 의 Redis상 chatId: {} 가 없거나 다름 (아직 채팅방 입장 처리 안됨)", senderId, chatIdOpt.get());
+            return;
+        }
+        Long chatId = chatIdOpt.get();
 
-        switch (webSocketMessageDTO.getType()) {
+        talkMessageDTO.setSenderId(senderId);
+        talkMessageDTO.setTimestamp(Instant.now());
+
+        switch (talkMessageDTO.getType()) {
 
             case TALK:
-                // AppService 호출하여 메시지 DB에 저장
+                // DB 저장
                 messageService.createMessage(
-                        new MessageRequestDTO(webSocketMessageDTO.getContent()), senderId, chatId
+                        new MessageRequestDTO(talkMessageDTO.getContent()), senderId, chatId
                 );
+
                 // 해당 채팅방의 모든 세션에게 메시지 방송
-                sendMessageToChatRoom(webSocketMessageDTO, chatId);
-                log.info("[메시지] 보낸사람: {}, 채팅방: {}, 내용: {}", senderId, chatId, webSocketMessageDTO.getContent());
+                // kafkaProducer.send(new MessageSendEvent());
+                // 컨슈머가 받아서 안정적 처리
+                sendMessageToChatRoom(talkMessageDTO);
+                log.info("[메시지] 보낸사람: {}, 채팅방: {}, 내용: {}", senderId, chatId, talkMessageDTO.getContent());
                 break;
 
             // 향후 다른 실시간 메시지 타입(예: READ_ACK)이 추가.
             default:
-                log.warn("처리할 수 없는 메시지 타입({}) 수신", webSocketMessageDTO.getType());
+                log.warn("처리할 수 없는 메시지 타입({}) 수신", talkMessageDTO.getType());
                 break;
 
         }
     }
 
     // 특정 채팅방에 메시지를 방송하는 헬퍼 메서드
-    private void sendMessageToChatRoom(WebSocketMessageDTO message, Long chatId) {
+    private void sendMessageToChatRoom(TalkMessageDTO message) {
+        Long chatId = message.getChatId();
         Set<Long> userIdsInChat = chatService.getUsersInChat(chatId);
 
         if (userIdsInChat == null || userIdsInChat.isEmpty()) {
@@ -159,18 +163,25 @@ public class WebSocketHandler extends TextWebSocketHandler {
         }
 
         // 스프링 프레임워크에 내장된 클래스
-        TextMessage textMessage;
+        String messagePayload;
         try {
             // 메시지 DTO를 JSON 문자열로 변환하여 TextMessage 객체 생성 (한 번만 수행)
-            textMessage = new TextMessage(objectMapper.writeValueAsString(message));
+            messagePayload = objectMapper.writeValueAsString(message);
         } catch (JsonProcessingException e) {
             log.error("메시지 DTO JSON 변환 실패. ChatId: {}", chatId, e);
             return;
         }
+        TextMessage textMessage = new TextMessage(messagePayload);
+
+        /*
+            해쉬맵, -> grpc 리퀘스트를 한번에 전송 [ 최적화 ] => 이해정도
+         */
 
         // 각 유저 ID에 해당하는 WebSocketSession을 찾아 메시지 전송.
         userIdsInChat.parallelStream().forEach(userId -> {
             WebSocketSession receiverSession = userIdToSessionMap.get(userId);
+
+            // Case 1: 같은 서버 내에서 WebSocket 전송
             if (receiverSession != null && receiverSession.isOpen()) {
                 try {
                     receiverSession.sendMessage(textMessage);
@@ -179,12 +190,30 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 } catch (IOException e) {
                     log.error("메시지 전송 실패. 수신자 ID: {}", userId, e);
                 }
-            } else {
+            }
+            else {
                 String redisKey = USER_SERVER_KEY_PREFIX + userId;
-                String serverId = redisTemplate.opsForValue().get(redisKey);
+                String targetServerId = redisTemplate.opsForValue().get(redisKey);
 
-                if (serverId != null && !serverId.equals(serverIdentifier)) {
+                // Case 2-1: 다른 서버에 연결 → gRPC 릴레이
+                if (targetServerId != null && !targetServerId.equals(serverIdentifier)) {
+                    log.info("다른 서버로 메시지 릴레이 시도. 수신자 ID: {}, 대상 서버: {}", userId, targetServerId);
+                    relayMessageViaGrpc(targetServerId, message, userId);
+                }
 
+                // Case 2-2: 접속 정보 없음 → FCM
+                else {
+                    log.info("오프라인 사용자. FCM 알림 전송 시도. 수신자 ID: {}", userId);
+                    UndeliveredMessage undeliveredMessage = UndeliveredMessage.builder()
+                            .id(undeliveredMessageIdGenerator.generate())
+                            .chatId(chatId)
+                            .senderId(message.getSenderId())
+                            .receiverId(userId)
+                            .content(message.getContent())
+                            .build();
+                    undeliveredMessageRepository.save(undeliveredMessage);
+
+                    fcmPushService.sendPushNotification(userId, message);
                 }
 
                 // 나한테 웹소켓이 없는경우 or 아예 웹소켓이 연결되지 않은경우
@@ -220,31 +249,63 @@ public class WebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        // redis del
-
+    public void afterConnectionClosed (WebSocketSession session, CloseStatus status) throws Exception {
         Optional<Long> userIdOptional = getUserIdFromSession(session);
+        if (userIdOptional.isEmpty()) {
+            log.info("[연결 종료] 연결이 끊겼습니다. 상태: {}", status);
+            return;
+        }
 
-        if (userIdOptional.isPresent()) {
-            Long userId = userIdOptional.get();
+        Long userId = userIdOptional.get();
+        userIdToSessionMap.remove(userId);
 
-            userIdToSessionMap.remove(userId);
-            log.info("[연결 종료] 사용자 ID: {} 연결이 끊겼습니다. 상태: {}", userId, status);
+        // (선택) chatService에 비정상 종료를 알려 상태를 정리하도록 할 수 있습니다.
+        // chatService.handleDisconnect(userId);
 
-            // (선택) chatService에 비정상 종료를 알려 상태를 정리하도록 할 수 있습니다.
-            // chatService.handleDisconnect(userId);
+        // [추가] Redis에 저장된 사용자 위치 정보 삭제
+        String userKey = "user:" + userId + ":state";
+        String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+        if (chatIdStr != null) {
+            redisTemplate.opsForSet().remove("chatId:" + chatIdStr + ":userId", String.valueOf(userId));
+        }
 
-            // [추가] Redis에 저장된 사용자 위치 정보 삭제
-            String redisKey = USER_SERVER_KEY_PREFIX + userId;
-            redisTemplate.delete(redisKey);
-            log.info("[연결 종료] Redis 사용자 위치 정보 삭제. Key: {}", redisKey);
+        redisTemplate.delete(userKey);
+        log.info("[연결 종료] Redis 사용자 위치 정보 삭제. Key: {}", userKey);
+    }
 
+    /*
+        메세지를 다른 서버에 보냄
+        1000 방 , ㄱ 서버에 유저들이 잇는데 (약 100명), ㄴ 서버에 (50명)
+        ㄱ 서버에 100 리퀘스트를 다 요청 상황 - 포문 방식
+        ㄱ 서버에는 벌크로 요청하는 릴레이로 개선
+     */
+    private void relayMessageViaGrpc (String targetServerId, TalkMessageDTO messageDTO, Long recipientId) {
+        // 1. 설정에서 서버 주소록을 가져오기
+        Map<String, String> addresses = grpcServerProperties.getAddresses();
+        String targetAddress = addresses.get(targetServerId);
 
+        if (targetAddress == null || targetAddress.isEmpty()) {
+            log.error("gRPC 릴레이 실패: 대상 서버 '{}'의 주소를 찾을 수 없습니다.", targetServerId);
+            return;
+        }
 
+        try {
+            // 2. 주소를 host와 port로 분리 (e.g., "localhost:9091")
+            String[] parts = targetAddress.split(":");
+            String host = parts[0];
+            int port = Integer.parseInt(parts[1]);
+
+            // 3. MessageRelayClient를 사용하여 gRPC 요청 송신
+            messageRelayClient.relayMessageToServer(host, port, messageDTO, recipientId);
+
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+            log.error("gRPC 릴레이 실패: 대상 서버 '{}'의 주소 형식이 올바르지 않습니다. (address: {})", targetServerId, targetAddress, e);
+        } catch (Exception e) {
+            log.error("gRPC 릴레이 중 예상치 못한 에러 발생. 대상 서버: {}", targetServerId, e);
         }
     }
 
-    private Optional<Long> getUserIdFromSession(WebSocketSession session) {
+    private Optional<Long> getUserIdFromSession (WebSocketSession session) {
         try {
             Map<String, Object> attributes = session.getAttributes();
             Object userIdObj = attributes.get("userId");
@@ -270,16 +331,16 @@ public class WebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void sendMessageToOthersInChatRoom(WebSocketMessageDTO message, Set<WebSocketSession> sessions, WebSocketSession senderSession) {
-        sessions.stream()
-                .filter(sess -> !sess.getId().equals(senderSession.getId()))
-                .forEach(sess -> {
-                    try {
-                        String payload = objectMapper.writeValueAsString(message);
-                        sess.sendMessage(new TextMessage(payload));
-                    } catch (Exception e) {
-                        log.error(e.getMessage(), e);
-                    }
-                });
+
+    private Optional<Long> getCurrentChatIdForUser(Long userId) {
+        try {
+            String userKey = "user:" + userId + ":state"; // Hash: {chatId, serverId, lastActive}
+            Object chatIdObj = redisTemplate.opsForHash().get(userKey, "chatId");
+            if (chatIdObj == null) return Optional.empty();
+            return Optional.of(Long.parseLong(chatIdObj.toString()));
+        } catch (Exception e) {
+            log.error("Redis에서 user:{} 의 chatId 조회 실패", userId, e);
+            return Optional.empty();
+        }
     }
 }
