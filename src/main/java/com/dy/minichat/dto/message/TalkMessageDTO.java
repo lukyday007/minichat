@@ -1,6 +1,7 @@
 package com.dy.minichat.dto.message;
 
 import lombok.*;
+import java.time.Instant;
 
 /*
     WebSocketMessage DTO의 역할: Request인가? Response인가?
@@ -12,27 +13,26 @@ import lombok.*;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-public class WebSocketMessageDTO {
+public class TalkMessageDTO {
     // readResponseDTO, leaveResponseDTO
     // 아래의 필드들은 응답별로 구분
-
     // 메시지의 종류 (입장, 대화, 읽음 등)
-    private MessageType type;
 
-    // 메시지를 보낼 채팅방 ID
-    private Long chatId;
-
-    // 메시지를 보낸 사람 ID
     private Long senderId;
 
-    // 메시지 내용
+    private Long chatId;
+
+    private MessageType type;
+
     private String content;
 
     // 마지막으로 읽은 메시지 ID (READ 타입일 때 사용)
     private Long lastMessageId;
 
+    private Instant timestamp;
+
     // 메시지 타입을 관리하기 위한 Enum
     public enum MessageType {
-        ENTER, TALK, READ, LEAVE
+        TALK
     }
 }
