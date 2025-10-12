@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package com.dy.grpc;
+
+// gRPC 패키지명 및 자바용 옵션
+option java_multiple_files = true;
+option java_package = "com.dy.grpc.proto"; // 생성될 자바 클래스의 패키지
+option java_outer_classname = "RelayMessageProto"; // 바이트코드 상 outer 클래스 이름
+
+enum MessageType {
+  UNKNOWN = 0; // 기본값
+  TALK = 1;
+}
+
+// 서버 간 전달될 공통 메시지 포맷 ( 순서 너무 중요 )
+message RelayMessageRequest {
+  int64 senderId = 1;         // 메시지를 보낸 유저 ID
+  int64 chatId = 2;           // 채팅방 ID
+  string content = 3;         // 메시지 내용
+  string messageType = 4;     // TALK, ENTER, READ, LEAVE
+  string timestamp = 5;       // ISO-8601 형태
+  int64 recipientId = 6;
+}
+
+// 1:10,2:0x0001,3:sffs,4:s'sdf'
+
+// 릴레이 요청에 대한 응답
+message RelayMessageResponse {
+  bool success = 1;           // 전송 성공 여부
+  string targetServerId = 2;  // 실제 수신 처리한 서버 ID
+  string message = 3;         // 로그용 메시지 (예: "전송 완료" 또는 "수신자 세션 없음")
+}
+
+// gRPC 서비스 정의
+service RelayMessageService {
+  // 단일 메시지 릴레이 (서버 → 서버)
+  rpc relayMessage (RelayMessageRequest) returns (RelayMessageResponse);
+}
