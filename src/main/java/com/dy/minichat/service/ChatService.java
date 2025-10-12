@@ -1,22 +1,19 @@
 package com.dy.minichat.service;
 
 import com.dy.minichat.config.id.ChatIdGenerator;
-import com.dy.minichat.config.id.MessageIdGenerator;
 import com.dy.minichat.config.id.UserChatIdGenerator;
-import com.dy.minichat.config.id.UserIdGenerator;
 import com.dy.minichat.dto.request.ChatRequestDTO;
 import com.dy.minichat.dto.request.InviteRequestDTO;
 import com.dy.minichat.dto.response.UserChatResponseDTO;
 import com.dy.minichat.entity.*;
 import com.dy.minichat.event.SystemMessageEvent;
 import com.dy.minichat.repository.ChatRepository;
-import com.dy.minichat.repository.MessageRepository;
 import com.dy.minichat.repository.UserChatRepository;
 import com.dy.minichat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -116,7 +113,7 @@ public class ChatService {
 
     private Long upgradeDirectChatToGroup(List<Long> existingMemberIds, List<User> newInvitedUsers) {
         // 전체 멤버 ID 목록 생성
-        existingMemberIds.addAll(newInvitedUsers.stream().map(User::getId).collect(Collectors.toList()));
+        existingMemberIds.addAll(newInvitedUsers.stream().map(User::getId).toList());
         List<Long> allMemberIds = existingMemberIds;
 
         // 새로운 그룹 채팅방의 이름 생성
