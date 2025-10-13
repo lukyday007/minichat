@@ -1,8 +1,12 @@
 package com.dy.minichat.service;
 
+import com.dy.minichat.entity.FcmToken;
+import com.dy.minichat.repository.FcmTokenRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * 간단한 임시 메모리 기반 토큰 저장소
@@ -12,7 +16,9 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class FcmTokenService {
     private final RedisTemplate<String, String> redisTemplate;
+    private final FcmTokenRepository fcmTokenRepository;
     private static final String FCM_TOKEN_KEY = "fcm_tokens";
+    private static final long TOKEN_TTL_SECONDS = 60L * 60 * 24 * 30; // 30일
 
     /*
         토큰 같은 정보는 디비에 영구적으로 저장이 되어있어야 하긴 함 -> mysql
@@ -22,21 +28,47 @@ public class FcmTokenService {
     */
 
     /*
-        ttl 설정하기!
+      FCM 토큰 등록
+      - Redis와 MySQL 둘 다 저장
+      - Redis에는 TTL 설정
     */
     public void registerToken(Long userId, String token) {
-        // opsForHash() : Hash 타입의 데이터를 다루는 커맨드 모음
-        // put(KEY, HASH_KEY, HASH_VALUE)
         redisTemplate.opsForHash().put(FCM_TOKEN_KEY, String.valueOf(userId), token);
+        redisTemplate.expire(FCM_TOKEN_KEY, TOKEN_TTL_SECONDS, TimeUnit.SECONDS);
+
+        FcmToken fcmToken = fcmTokenRepository.findByUserId(userId)
+                .map(existing -> existing.updateToken(token))
+                .orElseGet(() -> new FcmToken(userId, token));
+
+        fcmTokenRepository.save(fcmToken);
     }
 
+    /*
+     FCM 토큰 조회
+     - Redis 우선 조회
+     - Redis에 없으면 DB에서 조회 후 다시 Redis에 캐싱
+     */
     public String getTokenByUserId(Long userId) {
-        // get(KEY, HASH_KEY)
-        return (String) redisTemplate.opsForHash().get(FCM_TOKEN_KEY, String.valueOf(userId));
+        String token = (String) redisTemplate.opsForHash().get(FCM_TOKEN_KEY, String.valueOf(userId));
+
+        if (token == null) {
+            FcmToken fcmToken = fcmTokenRepository.findByUserId(userId).orElse(null);
+            if (fcmToken != null) {
+                token = fcmToken.getToken();
+                redisTemplate.opsForHash().put(FCM_TOKEN_KEY, String.valueOf(userId), token);
+                redisTemplate.expire(FCM_TOKEN_KEY, TOKEN_TTL_SECONDS, TimeUnit.SECONDS);
+            }
+        }
+        return token;
     }
 
+    /*
+      FCM 토큰 삭제
+      - Redis와 MySQL에서 모두 삭제
+    */
     public void removeToken(Long userId) {
-        // delete(KEY, HASH_KEY)
         redisTemplate.opsForHash().delete(FCM_TOKEN_KEY, String.valueOf(userId));
+
+        fcmTokenRepository.deleteByUserId(userId);
     }
 }
