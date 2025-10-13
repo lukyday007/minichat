@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
 import org.springframework.beans.factory.annotation.Value;
 
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
