@@ -43,6 +43,10 @@ public class UserChatUpdateService {
 
     */
 
+    /*
+        jpql 벌크 연산 적용
+        Query : UPDATE UserChat SET ... WHERE chat.id = ? AND is_deleted = false
+    */
     @Async
     @Transactional
     public void updateUserChatOnNewMessage(Long chatId, Message lastMessage) {
