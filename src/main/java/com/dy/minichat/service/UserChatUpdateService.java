@@ -46,21 +46,10 @@ public class UserChatUpdateService {
     @Async
     @Transactional
     public void updateUserChatOnNewMessage(Long chatId, Message lastMessage) {
-        // 해당 채팅방에 속한 모든 UserChat 엔티티를 조회
-        List<UserChat> userChatsInRoom = userChatRepository.findAllByChatIdAndIsDeletedFalse(chatId);
-
-        // 각 UserChat 엔티티의 필드를 새로운 메시지 정보로 업데이트
-        for (UserChat userChat : userChatsInRoom) {
-            userChat.setLastWrittenMessage(lastMessage);
-            userChat.setLastMessageTimestamp(lastMessage.getCreatedAt());
-        }
-
-        // 안에서 batch update 하면 더 빨라짐
-        // jdbc, jpa 등등 여러 방법이 있음
-
-        // @Transactional 어노테이션에 의해 메서드가 종료될 때
-        // 변경된 userChat 엔티티들이 DB에 자동으로 UPDATE 됩니다 (Dirty Checking).
-        // userChatRepository.saveAll(userChatsInRoom); // 명시적으로 호출할 필요 없음
+        userChatRepository.updateAllLastMessageByChatId(
+                chatId,
+                lastMessage,
+                lastMessage.getCreatedAt()
+        );
     }
-
 }

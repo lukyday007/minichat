@@ -1,17 +1,15 @@
 package com.dy.minichat.repository;
 
 import com.dy.minichat.entity.Message;
-import com.dy.minichat.entity.User;
 import com.dy.minichat.entity.UserChat;
-import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -73,5 +71,10 @@ public interface UserChatRepository extends JpaRepository<UserChat, Long> {
     // [추가] 특정 채팅방에 속한 모든 사용자의 ID 목록만 조회 쿼리
     @Query("SELECT uc.user.id FROM UserChat uc WHERE uc.chat.id = :chatId AND uc.isDeleted = false")
     List<Long> findUserIdsByChatId(@Param("chatId") Long chatId);
+
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE UserChat uc SET uc.lastWrittenMessage = :lastMessage, uc.lastMessageTimestamp = :timestamp " +
+            "WHERE uc.chat.id = :chatId AND uc.isDeleted = false")
+    void updateAllLastMessageByChatId(Long chatId, Message lastMessage, LocalDateTime timestamp);
 
 }
