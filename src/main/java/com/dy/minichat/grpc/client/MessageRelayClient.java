@@ -1,26 +1,36 @@
 package com.dy.minichat.grpc.client;
 
-import com.dy.grpc.proto.RelayMessageProto;
 import com.dy.grpc.proto.RelayMessageResponse;
 import com.dy.grpc.proto.RelayMessageServiceGrpc;
 import com.dy.grpc.proto.RelayMessageRequest;
 import com.dy.minichat.dto.message.TalkMessageDTO;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import jakarta.annotation.PreDestroy;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /*
     서버 (송신 측) grpc client 코드
 */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class MessageRelayClient {
+
+    private final Map<String, ManagedChannel> channels = new ConcurrentHashMap<>();
+
     public void relayMessageToServer (String targetServerHost, int targetServerPort, TalkMessageDTO messageDto, Long recipientId) {
-        ManagedChannel channel = ManagedChannelBuilder
-                .forAddress(targetServerHost, targetServerPort)
-                .usePlaintext()
-                .build();
+        String targetAddress = targetServerHost + ":" + targetServerPort;
+        ManagedChannel channel = channels.computeIfAbsent(targetAddress, key ->
+                ManagedChannelBuilder.forAddress(targetServerHost, targetServerPort)
+                        .usePlaintext()
+                        .build()
+        );
 
         RelayMessageServiceGrpc.RelayMessageServiceBlockingStub stub = RelayMessageServiceGrpc.newBlockingStub(channel);
 
@@ -33,9 +43,21 @@ public class MessageRelayClient {
                 .setRecipientId(recipientId)
                 .build();
 
-        RelayMessageResponse response = stub.relayMessage(request);
-        log.info("relay result = {}", response.getMessage());
+        try {
+            RelayMessageResponse response = stub.relayMessage(request);
+            log.info("gRPC Relay Result: {}", response.getMessage());
 
-        channel.shutdown();
+        } catch (Exception e) {
+            log.error("gRPC request to {} failed: {}", targetAddress, e.getMessage());
+            channels.remove(targetAddress);
+            channel.shutdown();
+        }
+    }
+
+    @PreDestroy
+    public void shutdownAllChannels() {
+        log.info("모든 gRPC 채널을 종료합니다...");
+        channels.values().forEach(ManagedChannel::shutdown);
+        log.info("모든 gRPC 채널이 종료되었습니다.");
     }
 }

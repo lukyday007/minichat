@@ -3,6 +3,7 @@ package com.dy.minichat.grpc.server;
 import com.dy.grpc.proto.RelayMessageRequest;
 import com.dy.grpc.proto.RelayMessageResponse;
 import com.dy.grpc.proto.RelayMessageServiceGrpc;
+import com.dy.minichat.component.WebSocketSessionManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -22,20 +23,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class MessageRelayServer extends RelayMessageServiceGrpc.RelayMessageServiceImplBase {
 
-    // WebSocket 핸들러가 관리하는 세션 맵을 주입받아야 함.
-    // 실제 구현에서는 WebSocketHandler와 세션 맵을 관리하는 별도의 Service를 두는 것이 좋음.
-    private final Map<Long, WebSocketSession> userIdToSessionMap;
+    private final WebSocketSessionManager sessionManager;
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @Override
     public void relayMessage(RelayMessageRequest request, StreamObserver<RelayMessageResponse> responseObserver) {
         log.info("gRPC relayMessage 요청 수신: {}", request);
 
-        // ⚠️ 중요: 요청 DTO에 '수신자 ID'가 필요합니다. (아래 '설계 개선 제안' 참고)
-        // 이 예제에서는 요청을 보낸 쪽의 senderId를 임시로 수신자로 가정하지만,
-        // 실제로는 recipientId 필드를 추가해야 합니다.
-        Long recipientId = request.getSenderId(); // proto에 recipientId가 추가되었다고 가정
-        WebSocketSession receiverSession = userIdToSessionMap.get(recipientId);
+        Long recipientId = request.getRecipientId(); // proto에 recipientId 추가
+        WebSocketSession receiverSession = sessionManager.getSession(recipientId);
 
         if (receiverSession != null && receiverSession.isOpen()) {
             try {

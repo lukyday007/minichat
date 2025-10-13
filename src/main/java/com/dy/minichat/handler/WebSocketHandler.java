@@ -1,5 +1,6 @@
 package com.dy.minichat.handler;
 
+import com.dy.minichat.component.WebSocketSessionManager;
 import com.dy.minichat.config.id.UndeliveredMessageIdGenerator;
 import com.dy.minichat.dto.message.TalkMessageDTO;
 import com.dy.minichat.dto.request.MessageRequestDTO;
@@ -25,7 +26,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -47,7 +47,12 @@ public class WebSocketHandler extends TextWebSocketHandler {
     private final MessageRelayClient messageRelayClient; // gRPC 클라이언트 주입
     private final GrpcServerProperties grpcServerProperties; // gRPC 서버 주소록 주입
 
-    private final Map<Long, WebSocketSession> userIdToSessionMap = new ConcurrentHashMap<>();
+    /*
+        웹소켓 세션을 중앙에서 관리하는 WebSocketSessionManager 주입
+        private final Map<Long, WebSocketSession> userIdToSessionMap = new ConcurrentHashMap<>();
+    */
+    private final WebSocketSessionManager sessionManager;
+
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -75,9 +80,9 @@ public class WebSocketHandler extends TextWebSocketHandler {
             String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
 
             if (chatIdStr != null) {
-                // 로컬 메모리에 세션 저장 (메시지 전송을 위해 필수)
-                userIdToSessionMap.put(userId, session);
-                // [추가] Redis에 "어떤 유저가 / 이 서버에 접속했다"는 정보 저장 및 갱신
+                // 로컬 메모리에 세션 저장
+                sessionManager.addSession(userId, session);
+                // redis
                 redisTemplate.opsForHash().put(userKey, "serverId", serverIdentifier);
                 redisTemplate.opsForHash().put(userKey, "lastActive", LocalDateTime.now().toString());
                 log.info("유저 {}가 채팅방 {}에 연결됨, server log = {}", userId, chatIdStr, serverIdentifier);
@@ -170,7 +175,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
 
         // 각 유저 ID에 해당하는 WebSocketSession을 찾아 메시지 전송.
         userIdsInChat.parallelStream().forEach(userId -> {
-            WebSocketSession receiverSession = userIdToSessionMap.get(userId);
+            WebSocketSession receiverSession = sessionManager.getSession(userId);
 
             // Case 1: 같은 서버 내에서 WebSocket 전송
             if (receiverSession != null && receiverSession.isOpen()) {
@@ -236,7 +241,6 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 */
             }
         });
-
     }
 
     @Override
@@ -248,7 +252,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
         }
 
         Long userId = userIdOptional.get();
-        userIdToSessionMap.remove(userId);
+        sessionManager.removeSession(userId);
 
         // (선택) chatService에 비정상 종료를 알려 상태를 정리하도록 할 수 있습니다.
         // chatService.handleDisconnect(userId);
