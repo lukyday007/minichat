@@ -21,4 +21,8 @@ public class WebSocketSessionManager {
     public WebSocketSession getSession (Long userId) {
         return sessions.get(userId);
     }
+
+    public Map<Long, WebSocketSession> getSessions() {
+        return this.sessions;
+    }
 }

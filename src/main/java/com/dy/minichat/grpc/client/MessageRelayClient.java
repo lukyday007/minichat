@@ -56,8 +56,14 @@ public class MessageRelayClient {
 
     @PreDestroy
     public void shutdownAllChannels() {
-        log.info("모든 gRPC 채널을 종료합니다...");
-        channels.values().forEach(ManagedChannel::shutdown);
+        log.info("애플리케이션 종료: 모든 활성 gRPC 채널을 종료합니다...");
+        for (ManagedChannel channel : channels.values()) {
+            try {
+                channel.shutdown();
+            } catch (Exception e) {
+                log.error("gRPC 채널 종료 중 에러 발생", e);
+            }
+        }
         log.info("모든 gRPC 채널이 종료되었습니다.");
     }
 }

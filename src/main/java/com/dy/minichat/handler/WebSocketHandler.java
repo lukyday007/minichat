@@ -66,7 +66,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
         log.info("--- WebSocket Connection Established ---");
         log.info("Session ID: {}", session.getId());
         log.info("Connection URI: {}", session.getUri());
-        log.info("Session Attributes: {}", session.getAttributes()); // 👈 HandshakeInterceptor가 넣어준 정보 확인
+        log.info("Session Attributes: {}", session.getAttributes());
         log.info("------------------------------------");
 
         Optional<Long> userIdOptional = getUserIdFromSession(session);
@@ -74,7 +74,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
         // userId가 존재할 경우에만 연결 수립 로직 진행
         if (userIdOptional.isPresent()) {
             Long userId = userIdOptional.get();
-            String userKey = "user:" + userId + ":state";
+            String userKey = "userId:" + userId + ":state";
 
             // redis 에서 chatId 조회
             String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
@@ -82,9 +82,14 @@ public class WebSocketHandler extends TextWebSocketHandler {
             if (chatIdStr != null) {
                 // 로컬 메모리에 세션 저장
                 sessionManager.addSession(userId, session);
-                // redis
+                // redis - user : chat
                 redisTemplate.opsForHash().put(userKey, "serverId", serverIdentifier);
                 redisTemplate.opsForHash().put(userKey, "lastActive", LocalDateTime.now().toString());
+                // redis - user : server
+                String redisKey = USER_SERVER_KEY_PREFIX + userId;
+                redisTemplate.opsForValue().set(redisKey, serverIdentifier);
+                log.info("유저 {} → 서버 [{}] 등록 완료", userId, serverIdentifier);
+
                 log.info("유저 {}가 채팅방 {}에 연결됨, server log = {}", userId, chatIdStr, serverIdentifier);
             } else {
                 log.warn("유저 {}의 chatId 정보가 없음 — API 미호출 가능성 있음", userId);
@@ -116,8 +121,14 @@ public class WebSocketHandler extends TextWebSocketHandler {
         log.info("Received DTO (JSON): {}", objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(talkMessageDTO));
 
         Optional<Long> chatIdOpt = getCurrentChatIdForUser(senderId);
-        if (chatIdOpt.isEmpty() || !chatIdOpt.get().equals(talkMessageDTO.getChatId())) {
-            log.warn("[메시지 무시] user:{} 의 Redis상 chatId: {} 가 없거나 다름 (아직 채팅방 입장 처리 안됨)", senderId, chatIdOpt.get());
+        if (chatIdOpt.isEmpty()) {
+            log.warn("[메시지 무시] user:{} 의 Redis상 chatId 정보가 없음 (채팅방 미입장 상태)", senderId);
+            return;
+        }
+
+        if (!chatIdOpt.get().equals(talkMessageDTO.getChatId())) {
+            log.warn("[메시지 무시] user:{} 의 Redis상 chatId({})가 수신 메시지의 chatId({})와 다름",
+                    senderId, chatIdOpt.get(), talkMessageDTO.getChatId());
             return;
         }
         Long chatId = chatIdOpt.get();
@@ -258,11 +269,16 @@ public class WebSocketHandler extends TextWebSocketHandler {
         // chatService.handleDisconnect(userId);
 
         // [추가] Redis에 저장된 사용자 위치 정보 삭제
-        String userKey = "user:" + userId + ":state";
+        String userKey = "userId:" + userId + ":state";
         String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
         if (chatIdStr != null) {
             redisTemplate.opsForSet().remove("chatId:" + chatIdStr + ":userId", String.valueOf(userId));
         }
+
+        // 메모리/Redis 정리
+        sessionManager.removeSession(userId);
+        redisTemplate.delete(USER_SERVER_KEY_PREFIX + userId);
+        log.info("유저 {}의 연결 종료, 서버 [{}]에서 정리 완료", userId, serverIdentifier);
 
         redisTemplate.delete(userKey);
         log.info("[연결 종료] Redis 사용자 위치 정보 삭제. Key: {}", userKey);
@@ -329,7 +345,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
 
     private Optional<Long> getCurrentChatIdForUser(Long userId) {
         try {
-            String userKey = "user:" + userId + ":state"; // Hash: {chatId, serverId, lastActive}
+            String userKey = "userId:" + userId + ":state"; // Hash: {chatId, serverId, lastActive}
             Object chatIdObj = redisTemplate.opsForHash().get(userKey, "chatId");
             if (chatIdObj == null) return Optional.empty();
             return Optional.of(Long.parseLong(chatIdObj.toString()));
