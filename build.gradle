@@ -26,8 +26,7 @@ repositories {
 }
 
 ext {
-	grpcVersion = '1.51.1'
-	protobufVersion = '3.25.3'
+	grpcVersion = '1.58.0'
 }
 
 dependencies {
@@ -38,9 +37,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
 	implementation 'org.springframework.kafka:spring-kafka'
 
-	// gRPC 관련 라이브러리 (버전을 변수로 통일)
-	implementation 'net.devh:grpc-spring-boot-starter:2.15.0.RELEASE'
-	implementation 'javax.annotation:javax.annotation-api:1.3.2'
+	// gRPC 관련 라이브러리 (서버와 클라이언트 모두 추가)
+	implementation 'net.devh:grpc-server-spring-boot-starter:3.1.0.RELEASE'
+	implementation 'net.devh:grpc-client-spring-boot-starter:3.1.0.RELEASE'
+
 	// FCM SDK
 	implementation 'com.google.firebase:firebase-admin:9.2.0'
 
@@ -55,20 +55,19 @@ dependencies {
 
 protobuf {
 	protoc {
-		artifact = "com.google.protobuf:protoc:${protobufVersion}"
+		artifact = "com.google.protobuf:protoc:3.25.3"
 	}
 	plugins {
 		grpc {
+			// 위에서 정의한 grpcVersion 변수를 사용하여 정확한 버전을 지정
 			artifact = "io.grpc:protoc-gen-grpc-java:${grpcVersion}"
 		}
 	}
 	generateProtoTasks {
 		all().each { task ->
-			// java 클래스 생성 설정
 			task.builtins {
 				java {}
 			}
-			// grpc 서비스 클래스 생성 설정
 			task.plugins {
 				grpc {}
 			}
@@ -79,11 +78,9 @@ protobuf {
 sourceSets {
 	main {
 		proto {
-			// proto 파일이 위치한 실제 경로를 지정
 			srcDir 'src/main/grpc'
 		}
 		java {
-			// gRPC가 생성하는 자바 소스 경로 추가
 			srcDirs 'build/generated/source/proto/main/java',
 					'build/generated/source/proto/main/grpc'
 		}
