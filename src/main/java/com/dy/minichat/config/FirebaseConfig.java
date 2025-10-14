@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
@@ -14,6 +15,7 @@ import java.io.InputStream;
 
 @Slf4j
 @Configuration
+@RequiredArgsConstructor
 public class FirebaseConfig {
 
     // yml에 정의된 파일 경로를 Resource 객체로 주입받음
