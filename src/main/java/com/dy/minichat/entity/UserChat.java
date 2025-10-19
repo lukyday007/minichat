@@ -37,6 +37,25 @@ public class UserChat {
     @JoinColumn(name = "last_written_message_id")
     private Message lastWrittenMessage; // last_message_id
 
+
+    // 마지막에 유저에게 보여진 광고 시간
+    //
+
+    // 남은 광고 충전 금액
+    //
+
+    // 광고 등급
+    //
+
+    // 광고 category
+    // .......
+
+    // +
+    // ai user id 최적화
+    // 카테고리화 (이 유저가 어떤 키워드, 어떤 광고들에 관심이 있을것같은지)
+
+    // 위에것들이 광고서버팀이 하는것
+
     // [추가] 채팅방 목록 내려줄 때 -> 최신 채팅방부터 내려주기
     // 최근 메세지가 쌓인 채팅방이 제일 위에 있는 채팅방 정렬
     @Column(name = "last_message_timestamp")

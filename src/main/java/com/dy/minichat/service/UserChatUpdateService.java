@@ -44,8 +44,24 @@ public class UserChatUpdateService {
     */
 
     /*
-        jpql 벌크 연산 적용
+        jpql 벌크 연산 적용 - 여러 개의 쿼리를 한꺼번에 = 레디스 파이프라인
         Query : UPDATE UserChat SET ... WHERE chat.id = ? AND is_deleted = false
+
+        dirty checking
+        : 로우 한건 업데이트
+
+        ------------------
+
+        jpql bulk update (modifying)
+        : 로우 여러건을 한번에 업데이트하는 쿼리를 실행
+
+        -------------------
+
+        yaml jpql option (pipeline)
+        : 여러개의 write 문을 한번에 redis pipeline 처럼 실행하고 싶을때 쓰는 옵션
+
+        jdbc bulk update (pipeline)
+        : 여러개의 write 문을 한번에 redis pipeline 처럼 실행하고 싶을때 쓰는 jdbc code
     */
     @Async
     @Transactional
