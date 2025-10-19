@@ -5,7 +5,9 @@ import com.dy.minichat.config.id.UndeliveredMessageIdGenerator;
 import com.dy.minichat.dto.message.TalkMessageDTO;
 import com.dy.minichat.dto.request.MessageRequestDTO;
 import com.dy.minichat.entity.UndeliveredMessage;
+import com.dy.minichat.event.MessageSendEvent;
 import com.dy.minichat.grpc.client.MessageRelayClient;
+import com.dy.minichat.kafka.producer.ChatMessageProducer;
 import com.dy.minichat.property.GrpcServerProperties;
 import com.dy.minichat.repository.UndeliveredMessageRepository;
 import com.dy.minichat.service.ChatService;
@@ -43,6 +45,8 @@ public class WebSocketHandler extends TextWebSocketHandler {
     private final StringRedisTemplate redisTemplate;
     private final String serverIdentifier; // ServerConfig에서 생성된 Bean
     private static final String USER_SERVER_KEY_PREFIX = "ws:user:server:";
+
+    private final ChatMessageProducer chatMessageProducer;
 
     private final MessageRelayClient messageRelayClient; // gRPC 클라이언트 주입
     private final GrpcServerProperties grpcServerProperties; // gRPC 서버 주소록 주입
@@ -147,7 +151,13 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 // 해당 채팅방의 모든 세션에게 메시지 방송
                 // kafkaProducer.send(new MessageSendEvent());
                 // 컨슈머가 받아서 안정적 처리
-                sendMessageToChatRoom(talkMessageDTO);
+                // Kafka로 이벤트 발행 (수정된 부분)
+                MessageSendEvent event = MessageSendEvent.builder()
+                        .talkMessage(talkMessageDTO)
+                        .build();
+                chatMessageProducer.send(event); // 프로듀서에게 위임
+
+                // sendMessageToChatRoom(talkMessageDTO);
                 log.info("[메시지] 보낸사람: {}, 채팅방: {}, 내용: {}", senderId, chatId, talkMessageDTO.getContent());
                 break;
 
@@ -157,6 +167,12 @@ public class WebSocketHandler extends TextWebSocketHandler {
                 break;
 
         }
+    }
+
+    // [신규 추가] Kafka Consumer가 호출할 public 메서드 -> private sendMessageToChatRoom
+    public void broadcastMessage(TalkMessageDTO message) {
+        log.info("[Kafka Consume] Broadcast 시작. ChatId: {}, Sender: {}", message.getChatId(), message.getSenderId());
+        sendMessageToChatRoom(message);
     }
 
     // 특정 채팅방에 메시지를 방송하는 헬퍼 메서드
@@ -280,7 +296,9 @@ public class WebSocketHandler extends TextWebSocketHandler {
         redisTemplate.delete(USER_SERVER_KEY_PREFIX + userId);
         log.info("유저 {}의 연결 종료, 서버 [{}]에서 정리 완료", userId, serverIdentifier);
 
-        redisTemplate.delete(userKey);
+        // redisTemplate.delete(userKey);
+        redisTemplate.opsForHash().delete(userKey, "serverId", "lastActive");
+        log.info("[연결 종료] Redis 사용자 접속 상태(서버)만 삭제. Key: {}", userKey);
         log.info("[연결 종료] Redis 사용자 위치 정보 삭제. Key: {}", userKey);
     }
 
@@ -349,6 +367,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
             Object chatIdObj = redisTemplate.opsForHash().get(userKey, "chatId");
             if (chatIdObj == null) return Optional.empty();
             return Optional.of(Long.parseLong(chatIdObj.toString()));
+
         } catch (Exception e) {
             log.error("Redis에서 user:{} 의 chatId 조회 실패", userId, e);
             return Optional.empty();
