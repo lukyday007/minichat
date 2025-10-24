@@ -14,7 +14,10 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @NoArgsConstructor
-@Table(name = "userchats")
+@Table(name = "userchats",
+        indexes = {
+                @Index(name = "idx_user_chat", columnList = "user_id, chat_id")
+        })
 public class UserChat {
     @Id
     private Long id;
