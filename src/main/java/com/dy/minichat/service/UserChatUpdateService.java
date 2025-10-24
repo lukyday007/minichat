@@ -1,10 +1,9 @@
 package com.dy.minichat.service;
 
 import com.dy.minichat.entity.Message;
-import com.dy.minichat.entity.UserChat;
-import com.dy.minichat.repository.UserChatRepository;
+import com.dy.minichat.event.UserChatUpdateEvent;
+import com.dy.minichat.kafka.producer.UserChatUpdateProducer;
 import lombok.RequiredArgsConstructor;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,7 +12,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class UserChatUpdateService {
-    private final UserChatRepository userChatRepository;
+    private final UserChatUpdateProducer userChatUpdateProducer;
 
     /*
     1. 비동기
@@ -63,13 +62,15 @@ public class UserChatUpdateService {
         jdbc bulk update (pipeline)
         : 여러개의 write 문을 한번에 redis pipeline 처럼 실행하고 싶을때 쓰는 jdbc code
     */
-    @Async
+    // 카프카 Async 둘 중 하나만 선택 -> only use kafka
     @Transactional
     public void updateUserChatOnNewMessage(Long chatId, Message lastMessage) {
-        userChatRepository.updateAllLastMessageByChatId(
-                chatId,
-                lastMessage,
-                lastMessage.getCreatedAt()
-        );
+        UserChatUpdateEvent event = UserChatUpdateEvent.builder()
+                .chatId(chatId)
+                .lastMessageId(lastMessage.getId())
+                .timestamp(lastMessage.getCreatedAt())
+                .build();
+
+        userChatUpdateProducer.sendUserChatUpdateEvent(event);
     }
 }
