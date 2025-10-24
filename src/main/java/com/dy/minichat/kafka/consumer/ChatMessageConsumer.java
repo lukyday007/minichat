@@ -16,7 +16,10 @@ public class ChatMessageConsumer {
     // WebSocketHandler를 주입받음
     private final WebSocketHandler webSocketHandler;
 
-    @KafkaListener(topics = "chat-message", groupId = "chat-group")
+    @KafkaListener(
+            topics = "chat-message",
+            groupId = "chat-group"
+    )
     public void consume(MessageSendEvent event) {
         TalkMessageDTO message = event.getTalkMessage();
         if (message == null) {
