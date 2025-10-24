@@ -6,6 +6,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 @Configuration
@@ -22,7 +25,18 @@ public class RedisConfig {
     }
 
     @Bean
-    public RedisTemplate<String, String> redisTemplate () {
+    public RedisTemplate<String, Long> redisTemplateForLong () {
+        RedisTemplate<String, Long> template = new RedisTemplate<>();
+
+        template.setConnectionFactory(redisConnectionFactory());
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new GenericToStringSerializer<>(Long.class));
+        template.afterPropertiesSet();
+        return template;
+    }
+
+    @Bean
+    public RedisTemplate<String, String> redisTemplateForString () {
         RedisTemplate<String, String> template = new RedisTemplate<>();
 
         template.setConnectionFactory(redisConnectionFactory());
@@ -39,5 +53,25 @@ public class RedisConfig {
         template.afterPropertiesSet();
 
         return template;
+    }
+
+    @Bean
+    public RedisScript<Long> lastReadUpdateScript() {
+        String script =
+                // KEYS[1]:
+                // KEYS[2]: Dirty Set
+                // ARGV[1]:
+                "local current = redis.call('GET', KEYS[1]) " +
+                        "if not current or tonumber(ARGV[1]) > tonumber(current) then " + //
+                        "redis.call('SET', KEYS[1], ARGV[1]) " +
+                        "redis.call('SADD', KEYS[2], KEYS[1]) " +
+                        "return 1 " + // 1 (
+                        "end " +
+                        "return 0"; // 0 (
+
+        DefaultRedisScript<Long> redisScript = new DefaultRedisScript<>();
+        redisScript.setScriptText(script);
+        redisScript.setResultType(Long.class);
+        return redisScript;
     }
 }
