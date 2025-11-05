@@ -74,4 +74,46 @@ public class RedisConfig {
         redisScript.setResultType(Long.class);
         return redisScript;
     }
+
+    // RedisConfig.java 내부에 추가
+
+    @Bean
+    public RedisScript<Long> rateLimitScript() {
+        String script =
+                // KEYS[1]: 유저별 Sorted Set 키
+                // ARGV[1]: 현재 시각 (ms)
+                // ARGV[2]: 윈도우 크기 (ms)
+                // ARGV[3]: 허용 요청 수
+                // ARGV[4]: 현재 요청 고유 ID
+
+                "local key = KEYS[1] " +
+                        "local current_time = tonumber(ARGV[1]) " +
+                        "local window_size = tonumber(ARGV[2]) " +
+                        "local limit = tonumber(ARGV[3]) " +
+                        "local member = ARGV[4] " +
+
+                        "local window_start = current_time - window_size " +
+
+                        // 1. 윈도우 이전의 오래된 로그 삭제
+                        "redis.call('ZREMRANGEBYSCORE', key, 0, window_start) " +
+
+                        // 2. 현재 윈도우 내의 요청 수 확인
+                        "local count = redis.call('ZCARD', key) " +
+
+                        // 3. 한도 체크
+                        "if count >= limit then " +
+                        "  return 1 " + // 1 (한도 초과)
+                        "end " +
+
+                        // 4. 현재 요청을 로그로 추가
+                        "redis.call('ZADD', key, current_time, member) " +
+                        "redis.call('EXPIRE', key, math.ceil(window_size / 1000) + 5) " +
+
+                        "return 0"; // 0 (한도 이내)
+
+        DefaultRedisScript<Long> redisScript = new DefaultRedisScript<>();
+        redisScript.setScriptText(script); // .setLocation() 대신 .setScriptText() 사용
+        redisScript.setResultType(Long.class);
+        return redisScript;
+    }
 }
