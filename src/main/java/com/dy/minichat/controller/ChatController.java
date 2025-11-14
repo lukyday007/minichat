@@ -7,6 +7,7 @@ import com.dy.minichat.global.model.BaseResponseBody;
 import com.dy.minichat.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -21,9 +22,10 @@ public class ChatController {
     // == 채팅방 생성 API == //
     @PostMapping("/chat")
     public ResponseEntity<BaseResponseBody> createChat(
+            @AuthenticationPrincipal Long creatorId,
             @RequestBody ChatRequestDTO request
     ) {
-        chatService.createChat(request);
+        chatService.createChat(creatorId, request);
         return ResponseEntity.status(201).body(BaseResponseBody.of(201, "채팅방 등록 성공."));
     }
 
@@ -31,7 +33,7 @@ public class ChatController {
     @PostMapping("/chat/{chatId}/enter")
     public ResponseEntity<BaseResponseBody> enterChatRoom(
             @PathVariable Long chatId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal Long userId
     ) {
         chatService.enterChatRoom(userId, chatId);
         return ResponseEntity.status(201).body(BaseResponseBody.of(201, "채팅방 입장"));
@@ -42,7 +44,7 @@ public class ChatController {
     public ResponseEntity<BaseResponseBody> leaveChat(
             @PathVariable Long chatId,
             // 인증된 사용자 정보
-            @RequestParam Long userId
+            @AuthenticationPrincipal Long userId
     ) {
         // Long userId = 1L; // 임시
 
@@ -53,7 +55,7 @@ public class ChatController {
     // == 채팅방 목록 반환 API == //
     @GetMapping("/chats")
     public ResponseEntity<List<UserChatResponseDTO>> getChatRoomsList(
-            @RequestParam Long userId   // 추후 인증 로직 추가
+            @AuthenticationPrincipal Long userId   // 추후 인증 로직 추가
     ) {
         // 유저 인증 후 해당 유저가 참가한 채팅방 목록 조회
         List<UserChatResponseDTO> data = chatService.getChatRoomsList(userId);
@@ -63,10 +65,11 @@ public class ChatController {
     // == 채팅방에 유저 초대 API == //
     @PostMapping("/chats/{chatId}/invite")
     public ResponseEntity<BaseResponseBody> inviteUsersToChat(
-            @RequestParam Long chatId,
+            @AuthenticationPrincipal Long inviterId,
+            @PathVariable Long chatId,
             @RequestBody InviteRequestDTO request
     ) {
-        chatService.inviteUsersToChat(chatId, request);
+        chatService.inviteUsersToChat(inviterId, chatId, request);
         return ResponseEntity.status(201).body(BaseResponseBody.of(201, "채팅방에 유저를 초대했습니다."));
     }
 }
