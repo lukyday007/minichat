@@ -17,6 +17,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -42,7 +44,9 @@ public class WebSocketHandler extends TextWebSocketHandler {
     private final UndeliveredMessageRepository undeliveredMessageRepository;
     private final UndeliveredMessageIdGenerator undeliveredMessageIdGenerator;
 
-    private final StringRedisTemplate redisTemplate;
+    @Qualifier("redisTemplateForString")
+    private final RedisTemplate<String, String> redisTemplateForString;
+
     private final String serverIdentifier; // ServerConfig에서 생성된 Bean
     private static final String USER_SERVER_KEY_PREFIX = "ws:user:server:";
 
@@ -81,17 +85,17 @@ public class WebSocketHandler extends TextWebSocketHandler {
             String userKey = "userId:" + userId + ":state";
 
             // redis 에서 chatId 조회
-            String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+            String chatIdStr = (String) redisTemplateForString.opsForHash().get(userKey, "chatId");
 
             if (chatIdStr != null) {
                 // 로컬 메모리에 세션 저장
                 sessionManager.addSession(userId, session);
                 // redis - user : chat
-                redisTemplate.opsForHash().put(userKey, "serverId", serverIdentifier);
-                redisTemplate.opsForHash().put(userKey, "lastActive", LocalDateTime.now().toString());
+                redisTemplateForString.opsForHash().put(userKey, "serverId", serverIdentifier);
+                redisTemplateForString.opsForHash().put(userKey, "lastActive", LocalDateTime.now().toString());
                 // redis - user : server
                 String redisKey = USER_SERVER_KEY_PREFIX + userId;
-                redisTemplate.opsForValue().set(redisKey, serverIdentifier);
+                redisTemplateForString.opsForValue().set(redisKey, serverIdentifier);
                 log.info("유저 {} → 서버 [{}] 등록 완료", userId, serverIdentifier);
 
                 log.info("유저 {}가 채팅방 {}에 연결됨, server log = {}", userId, chatIdStr, serverIdentifier);
@@ -216,7 +220,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
             }
             else {
                 String redisKey = USER_SERVER_KEY_PREFIX + userId;
-                String targetServerId = redisTemplate.opsForValue().get(redisKey);
+                String targetServerId = redisTemplateForString.opsForValue().get(redisKey);
 
                 // Case 2-1: 다른 서버에 연결 → gRPC 릴레이
                 if (targetServerId != null && !targetServerId.equals(serverIdentifier)) {
@@ -286,18 +290,18 @@ public class WebSocketHandler extends TextWebSocketHandler {
 
         // [추가] Redis에 저장된 사용자 위치 정보 삭제
         String userKey = "userId:" + userId + ":state";
-        String chatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+        String chatIdStr = (String) redisTemplateForString.opsForHash().get(userKey, "chatId");
         if (chatIdStr != null) {
-            redisTemplate.opsForSet().remove("chatId:" + chatIdStr + ":userId", String.valueOf(userId));
+            redisTemplateForString.opsForSet().remove("chatId:" + chatIdStr + ":userId", String.valueOf(userId));
         }
 
         // 메모리/Redis 정리
         sessionManager.removeSession(userId);
-        redisTemplate.delete(USER_SERVER_KEY_PREFIX + userId);
+        redisTemplateForString.delete(USER_SERVER_KEY_PREFIX + userId);
         log.info("유저 {}의 연결 종료, 서버 [{}]에서 정리 완료", userId, serverIdentifier);
 
         // redisTemplate.delete(userKey);
-        redisTemplate.opsForHash().delete(userKey, "serverId", "lastActive");
+        redisTemplateForString.opsForHash().delete(userKey, "serverId", "lastActive");
         log.info("[연결 종료] Redis 사용자 접속 상태(서버)만 삭제. Key: {}", userKey);
         log.info("[연결 종료] Redis 사용자 위치 정보 삭제. Key: {}", userKey);
     }
@@ -364,7 +368,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
     private Optional<Long> getCurrentChatIdForUser(Long userId) {
         try {
             String userKey = "userId:" + userId + ":state"; // Hash: {chatId, serverId, lastActive}
-            Object chatIdObj = redisTemplate.opsForHash().get(userKey, "chatId");
+            Object chatIdObj = redisTemplateForString.opsForHash().get(userKey, "chatId");
             if (chatIdObj == null) return Optional.empty();
             return Optional.of(Long.parseLong(chatIdObj.toString()));
 
