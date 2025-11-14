@@ -1,14 +1,9 @@
-package com.dy.minichat.component;
+package com.dy.minichat.component.replica;
 
-import com.dy.minichat.property.DataSourceProperty;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Bean;
-import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy;
 import org.springframework.jdbc.datasource.lookup.AbstractRoutingDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import javax.sql.DataSource;
-import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j

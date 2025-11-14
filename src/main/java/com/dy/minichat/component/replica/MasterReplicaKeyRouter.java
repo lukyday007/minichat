@@ -1,4 +1,4 @@
-package com.dy.minichat.config.replica;
+package com.dy.minichat.component.replica;
 
 import lombok.Getter;
 import lombok.Setter;

@@ -1,7 +1,7 @@
 package com.dy.minichat.config;
 
-import com.dy.minichat.config.replica.MasterReplicaKeyRouter;
-import com.dy.minichat.config.replica.RoutingDataSource;
+import com.dy.minichat.component.replica.MasterReplicaKeyRouter;
+import com.dy.minichat.component.replica.RoutingDataSource;
 import com.dy.minichat.property.DataSourceProperty;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
