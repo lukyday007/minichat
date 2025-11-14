@@ -1,5 +1,6 @@
 package com.dy.minichat.service;
 
+// import com.dy.minichat.component.TaskManager;
 import com.dy.minichat.config.id.MessageIdGenerator;
 import com.dy.minichat.dto.request.LastReadMessageRequestDTO;
 import com.dy.minichat.dto.request.MessageRequestDTO;
@@ -25,6 +26,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class MessageService {
+    // private final TaskManager taskManager;
+
     private final UserChatUpdateService userChatUpdateService;
 
     private final ChatRepository chatRepository;
@@ -83,8 +86,6 @@ public class MessageService {
         return messageRepository.save(systemMessage);
     }
 
-    @Qualifier("redisTemplateForLong")
-    private final RedisTemplate<String, Long> redisTemplateForLong;
     @Qualifier("redisTemplateForString")
     private final RedisTemplate<String, String> redisTemplateForString;
     private final RedisScript<Long> lastReadUpdateScript;
@@ -255,5 +256,4 @@ public class MessageService {
 
         return resultList;
     }
-
 }
