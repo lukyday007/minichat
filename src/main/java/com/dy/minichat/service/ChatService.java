@@ -12,8 +12,10 @@ import com.dy.minichat.repository.UserChatRepository;
 import com.dy.minichat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +42,8 @@ public class ChatService {
     // [추가] 이벤트 발행기 주입 -> Kafka로 수정
     private final ApplicationEventPublisher eventPublisher;
 
-    private final RedisTemplate<String, String> redisTemplate;
+    @Qualifier("redisTemplateForString")
+    private final RedisTemplate<String, String> redisTemplateForString;
     private final String serverIdentifier;
 
     /*
@@ -57,8 +60,10 @@ public class ChatService {
 
     // == 채팅방 API == //
     @Transactional
-    public Chat createChat(ChatRequestDTO dto) {
+    public Chat createChat(Long creatorId, ChatRequestDTO dto) {
         List<Long> userIds = dto.getUserIds();
+        Set<Long> allUserIds = new HashSet<>(userIds);
+        allUserIds.add(creatorId);
 
         // 유저 수에 따라 채팅방 상태 결정
         ChatStatus status = userIds.size() > 2 ? ChatStatus.GROUP : ChatStatus.DIRECT;
@@ -71,7 +76,7 @@ public class ChatService {
         chatRepository.save(chat);
 
         // snowflake아이디 설정 사용 -> repository Long => String 전환
-        List<User> users = userRepository.findAllById(userIds);
+        List<User> users = userRepository.findAllById(allUserIds);
 
         associateUsersWithChat(chat, users);
 
@@ -84,10 +89,36 @@ public class ChatService {
         return chat;
     }
 
+    @Transactional
+    public Chat createChat(ChatRequestDTO dto) {
+        List<Long> userIds = dto.getUserIds();
+
+        ChatStatus status = userIds.size() > 2 ? ChatStatus.GROUP : ChatStatus.DIRECT;
+
+        Chat chat = new Chat();
+        chat.setId(chatIdGenerator.generate());
+        chat.setTitle(dto.getTitle());
+        chat.setStatus(status);
+        chatRepository.save(chat);
+
+        List<User> users = userRepository.findAllById(userIds);
+
+        associateUsersWithChat(chat, users);
+
+        Message systemMessage = messageService.createSystemEntryMessage(chat, users);
+        eventPublisher.publishEvent(new SystemMessageEvent(chat.getId(), systemMessage));
+
+        return chat;
+    }
+
 
     // == 채팅방에 유저 초대 API == //
     @Transactional
-    public Long inviteUsersToChat(Long chatId, InviteRequestDTO dto) {
+    public Long inviteUsersToChat(Long inviterId, Long chatId, InviteRequestDTO dto) {
+        User inviter = userChatRepository.findByUserIdAndChatIdAndIsDeletedFalse(inviterId, chatId)
+                .orElseThrow(() -> new AccessDeniedException("초대 권한이 없습니다.")) // 403 Forbidden 유발
+                .getUser();
+
         Chat existingChat = chatRepository.findById(chatId)
                 .orElseThrow(() -> new IllegalArgumentException("채팅방을 찾을 수 없습니다."));
 
@@ -106,7 +137,7 @@ public class ChatService {
         if (existingChat.getStatus() == ChatStatus.DIRECT && totalMemberCount > 2) {
             return upgradeDirectChatToGroup(existingMemberIds, newInvitedUsers);
         } else {
-            addMembersToGroupChat(existingChat, newInvitedUsers);
+            addMembersToGroupChat(inviter, existingChat, newInvitedUsers);
             return existingChat.getId();
         }
     }
@@ -129,7 +160,7 @@ public class ChatService {
         return newChat.getId();
     }
 
-    private void addMembersToGroupChat(Chat chat, List<User> newInvitedUsers) {
+    private void addMembersToGroupChat(User inviter, Chat chat, List<User> newInvitedUsers) {
 
         associateUsersWithChat(chat, newInvitedUsers);
 
@@ -164,14 +195,14 @@ public class ChatService {
 
         //  이전 방이 있다면 퇴장 처리
         //      사용자의 현재 chatId를 Redis에서 조회
-        String oldChatIdStr = (String) redisTemplate.opsForHash().get(userKey, "chatId");
+        String oldChatIdStr = (String) redisTemplateForString.opsForHash().get(userKey, "chatId");
         if (oldChatIdStr != null)
-            redisTemplate.opsForSet().remove("chatId:" + oldChatIdStr + ":userId", userIdStr);
+            redisTemplateForString.opsForSet().remove("chatId:" + oldChatIdStr + ":userId", userIdStr);
 
         //  새로운 방 입장 처리
         String newChatKey = "chatId:" + chatId + ":userId";
         //      새로운 방의 유저 Set에 현재 유저를 추가
-        redisTemplate.opsForSet().add(newChatKey, userIdStr);
+        redisTemplateForString.opsForSet().add(newChatKey, userIdStr);
 
         //  사용자의 현재 참여 채팅방 및 서버 정보 업데이트
         Map<String, String> userState = Map.of(
@@ -179,7 +210,7 @@ public class ChatService {
                 "serverId", serverIdentifier,
                 "lastActive", LocalDateTime.now().toString()
         );
-        redisTemplate.opsForHash().putAll(userKey, userState);
+        redisTemplateForString.opsForHash().putAll(userKey, userState);
         log.info("[입장] user : {} -> chat : {} 상태 저장 완료", userId, chatId);
 
         /*
@@ -246,11 +277,11 @@ public class ChatService {
         if (lastChatIdStr != null) {
             String chatUsersKey = "chatId:" + lastChatIdStr + ":userId";
             // 해당 채팅방의 유저 목록(Set)에서 사용자 제거
-            redisTemplate.opsForSet().remove(chatUsersKey, userIdStr);
+            redisTemplateForString.opsForSet().remove(chatUsersKey, userIdStr);
         }
 
         // 2. 사용자의 세션 정보(Hash)를 완전히 삭제
-        redisTemplate.delete(userKey);
+        redisTemplateForString.delete(userKey);
 
         // WebSocketHandler 통해 실시간 방송 실행
         // webSocketHandler.broadcastSystemMessage(chatId, systemMessage);
@@ -265,7 +296,7 @@ public class ChatService {
 
 
     public Set<Long> getUsersInChat(Long chatId) {
-        Set<String> userIdsStr = redisTemplate.opsForSet().members("chatId:" + chatId + ":userId");
+        Set<String> userIdsStr = redisTemplateForString.opsForSet().members("chatId:" + chatId + ":userId");
 
         if (userIdsStr == null || userIdsStr.isEmpty())
             return Collections.emptySet();
