@@ -185,8 +185,6 @@ public class ChatService {
     // 방 들어갔을 때의 Redis - 현재 이 채팅방에 접속해서 활성화
     public void enterChatRoom(Long userId, Long chatId) {
 
-        //private final Map<Long, Set<Long>> chatToUsers
-        //private final Map<Long, Long> userToChat
         String userKey = "userId:" + userId + ":state";
         String userIdStr = String.valueOf(userId);
 
