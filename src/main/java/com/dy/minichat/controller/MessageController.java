@@ -6,6 +6,7 @@ import com.dy.minichat.global.model.BaseResponseBody;
 import com.dy.minichat.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -33,9 +34,8 @@ public class MessageController {
     @GetMapping("/chats/{chatId}/messages")
     public ResponseEntity<List<MessageResponseDTO>> getMessageListWithUnreadCounts (
             @PathVariable Long chatId,
-            @RequestParam Long userId
+            @AuthenticationPrincipal Long userId
     ) {
-        // 유저가 해당 채팅방에 접근할 수 있는 지에 대한 인증 추가
         List<MessageResponseDTO> data = messageService.getMessageListWithUnreadCounts(chatId, userId);
         return ResponseEntity.status(200).body(data);
     }
@@ -43,8 +43,8 @@ public class MessageController {
     // == 메세지 읽음 상태 업데이트 API == //
     @PutMapping("/chats/{chatId}/read")
     public ResponseEntity<BaseResponseBody> updateLastReadMessage(
-            @RequestParam Long chatId,
-            @RequestParam Long curUserId,
+            @PathVariable Long chatId,
+            @AuthenticationPrincipal Long curUserId,
             @RequestBody LastReadMessageRequestDTO request
     ) {
         messageService.updateLastReadMessage(request, curUserId, chatId);
