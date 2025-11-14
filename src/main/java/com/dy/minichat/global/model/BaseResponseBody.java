@@ -8,8 +8,8 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 public class BaseResponseBody {
-    String message = null;
-    Integer statusCode = null;
+    private String message = null;
+    private Integer statusCode = null;
 
     private BaseResponseBody(Integer statusCode) {
         this.statusCode = statusCode;
@@ -26,4 +26,11 @@ public class BaseResponseBody {
         body.statusCode = statusCode;
         return body;
     }
-}
+
+    public boolean getStatus() {
+        if (this.statusCode == null) {
+            return false;
+        }
+        // 2xx (Success) 범위인지 확인
+        return this.statusCode >= 200 && this.statusCode < 300;
+    }}
