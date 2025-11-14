@@ -36,6 +36,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-websocket'
 	implementation 'org.springframework.kafka:spring-kafka'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
 
 	// gRPC 관련 라이브러리 (서버와 클라이언트 모두 추가)
 	implementation 'net.devh:grpc-server-spring-boot-starter:3.1.0.RELEASE'
@@ -43,6 +44,11 @@ dependencies {
 
 	// FCM SDK
 	implementation 'com.google.firebase:firebase-admin:9.2.0'
+
+	// JWT 관련 의존성
+	implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5' // Jackson (JSON) 라이브러리와 통합
 
 	// 개발 및 테스트
 	compileOnly 'org.projectlombok:lombok'
