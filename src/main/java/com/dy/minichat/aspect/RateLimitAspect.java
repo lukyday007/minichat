@@ -7,6 +7,7 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Pointcut;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -25,7 +26,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RateLimitAspect {
 
-    private final RedisTemplate<String, String> redisTemplate;
+    @Qualifier("redisTemplateForString")
+    private final RedisTemplate<String, String> redisTemplateForString;
     private final RedisScript<Long> rateLimitScript; // 2번에서 등록한 Bean
     private final UserBanService userBanService;     // 3번에서 생성한 Bean
 
@@ -71,7 +73,7 @@ public class RateLimitAspect {
 
         try {
             // 2. Lua 스크립트 실행
-            Long result = redisTemplate.execute(
+            Long result = redisTemplateForString.execute(
                     rateLimitScript,
                     Collections.singletonList(redisKey),
                     String.valueOf(currentTime),

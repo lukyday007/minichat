@@ -4,11 +4,10 @@ import com.dy.minichat.entity.UserStatus;
 import com.dy.minichat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.aspectj.AnnotationTransactionAspect;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -18,7 +17,9 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class UserBanService { // UserBanServiceCGlibProxy...
     private final UserRepository userRepository;
-    private final RedisTemplate<String, String> redisTemplate;
+
+    @Qualifier("redisTemplateForString")
+    private final RedisTemplate<String, String> redisTemplateForString;
     // (실제 구현) Redis나 DB에 사용자 밴 상태를 영구 저장
 
     // 1. 누적 위반 횟수 (증가/INCR)
@@ -42,19 +43,19 @@ public class UserBanService { // UserBanServiceCGlibProxy...
         String tempBanKey = TEMP_BAN_KEY_PREFIX + userId;
 
         // 1. 위반 횟수 1 증가 (INCR)
-        Long strikeCount = redisTemplate.opsForValue().increment(strikeKey);
+        Long strikeCount = redisTemplateForString.opsForValue().increment(strikeKey);
 
         if (strikeCount == 1) {
             // [Strike 1] 1일 밴 적용
             log.warn("!!! [Strike 1] 사용자 {} 밴 처리 (1일)", userId);
             // "SET ban:state:user:123 "STRIKE_1" EX 86400"
-            redisTemplate.opsForValue().set(tempBanKey, "STRIKE_1", 1, TimeUnit.DAYS);
+            redisTemplateForString.opsForValue().set(tempBanKey, "STRIKE_1", 1, TimeUnit.DAYS);
 
         } else if (strikeCount == 2) {
             // [Strike 2] 1주일 밴 적용
             log.warn("!!! [Strike 2] 사용자 {} 밴 처리 (1주일)", userId);
             // "SET ban:state:user:123 "STRIKE_2" EX 604800"
-            redisTemplate.opsForValue().set(tempBanKey, "STRIKE_2", 7, TimeUnit.DAYS);
+            redisTemplateForString.opsForValue().set(tempBanKey, "STRIKE_2", 7, TimeUnit.DAYS);
 
         } else {
             // [Strike 3] 영구 밴 적용
@@ -65,7 +66,7 @@ public class UserBanService { // UserBanServiceCGlibProxy...
             // userService.banUser(userId); -> applyStrike @Tx 필요 없음 -> 트랜잭션 범위 작음
 
             // 2. 불필요해진 임시 밴 키, 스트라이크 키 삭제
-            redisTemplate.delete(List.of(strikeKey, tempBanKey));
+            redisTemplateForString.delete(List.of(strikeKey, tempBanKey));
         }
     }
 
@@ -99,7 +100,7 @@ public class UserBanService { // UserBanServiceCGlibProxy...
 
         try {
             // 1. 임시 밴(Redis) 확인
-            if (redisTemplate.hasKey(tempBanKey)) {
+            if (redisTemplateForString.hasKey(tempBanKey)) {
                 log.warn("[접속 확인] 사용자 {} 임시 밴 상태", userId);
                 return true;
             }
