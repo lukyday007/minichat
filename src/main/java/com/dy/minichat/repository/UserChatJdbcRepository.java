@@ -23,7 +23,7 @@ public class UserChatJdbcRepository {
             -> 성능차이 많이 남! = 레디스 파이프라인
         */
 
-        String sql = "UPDATE user_chat " +
+        String sql = "UPDATE userchats " +
                 "SET last_written_message_id = ?, last_message_timestamp = ? " +
                 "WHERE id = ? AND is_deleted = false " +
                 "AND (last_written_message_id IS NULL OR last_written_message_id < ?)";

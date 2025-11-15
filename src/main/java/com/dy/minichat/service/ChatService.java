@@ -215,7 +215,7 @@ public class ChatService {
 
 
     // == 채팅방 목록 반환 API == //
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     // read only true
     // - 디비레벨에서는 replica를 사용해서 scale out
     // - jpa레벨에서는 스냅샷안찍음, 트랜잭션끝날때 더티체킹안함, ... 소소한 최적화

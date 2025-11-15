@@ -50,7 +50,7 @@ public class SecurityConfig {
                         // '/minichat/user/auth/**' 경로는 인증 없이 허용 (회원가입, 로그인)
                         .requestMatchers("/minichat/user/auth/**").permitAll()
                         // [신규] WebSocket 경로도 일단 허용 (나중에 WebSocketInterceptor가 처리)
-                        .requestMatchers("/ws/chat/**").permitAll()
+                        .requestMatchers("/ws/minichat/**").permitAll()
                         // 그 외 모든 요청 (예: /minichat/chat/**)은 인증 필요
                         .anyRequest().authenticated()
                 )

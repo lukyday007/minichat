@@ -3,6 +3,8 @@ package com.dy.minichat.component;
 import com.dy.minichat.service.UserBanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
@@ -32,6 +34,12 @@ public class WebSocketHandshakeInterceptor implements HandshakeInterceptor {
 
         // 1. URI에서 'token' 쿼리 파라미터 추출
         String token = extractTokenFromUri(request.getURI());
+        log.info("[Handshake] raw token from URI: '{}'", token);
+
+        if (!StringUtils.hasText(token)) {
+            token = extractTokenFromHeader(request.getHeaders());
+            log.info("[Handshake] raw token from Header: '{}'", token);
+        }
 
         // 2. 토큰 유효성 검사
         if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
@@ -53,6 +61,7 @@ public class WebSocketHandshakeInterceptor implements HandshakeInterceptor {
         }
 
         log.warn("[Handshake] 인증 실패. 유효하지 않은 토큰.");
+        response.setStatusCode(HttpStatus.UNAUTHORIZED);
         return false; // 핸드셰이크 거부
     }
 
@@ -64,6 +73,14 @@ public class WebSocketHandshakeInterceptor implements HandshakeInterceptor {
             Exception exception
     ) {
         // (필요 없음)
+    }
+
+    private String extractTokenFromHeader(HttpHeaders headers) {
+        String bearer = headers.getFirst(HttpHeaders.AUTHORIZATION);
+        if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
+            return bearer.substring(7);
+        }
+        return null;
     }
 
     private String extractTokenFromUri(URI uri) {

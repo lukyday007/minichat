@@ -10,5 +10,4 @@ public class SignUpRequestDTO {
     private String email; // 또는 email
     private String password;
     private String name;
-
 }

@@ -51,7 +51,7 @@ public class MessageService {
 
         // save() 메서드 -> 저장된 Message 객체 반환
         // 이 savedMessage 객체는 id와 createdAt 값이 확실하게 보장됩니다
-        Message savedMessage = messageRepository.save(message);
+        Message savedMessage = messageRepository.saveAndFlush(message);
         // ID(snowflake)와 createdAt이 보장된 savedMessage 객체를 업데이트 서비스에 전달합니다.
         userChatUpdateService.updateUserChatOnNewMessage(chatId, savedMessage);
     }
@@ -126,7 +126,7 @@ public class MessageService {
     // update age = age +1 where month = 4;
 
     // == 메세지 목록  및 안 읽은 사람 수 반환 API == O ( M + N ) == //
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
     public List<MessageResponseDTO> getMessageListWithUnreadCounts(Long chatId, Long userId) {
 
         UserChat userChat = userChatRepository.findReadVersionByUserIdAndChatIdAndIsDeletedFalse(userId, chatId)

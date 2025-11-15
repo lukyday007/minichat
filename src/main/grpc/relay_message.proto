@@ -24,6 +24,16 @@ message RelayMessageRequest {
 
 // 1:10,2:0x0001,3:sffs,4:s'sdf'
 
+// [신규] 벌크 릴레이 요청
+message RelayBulkMessageRequest {
+  int64 senderId = 1;
+  int64 chatId = 2;
+  string content = 3;
+  string messageType = 4;
+  string timestamp = 5;
+  repeated int64 recipientIds = 6; // [변경] 여러 수신자
+}
+
 // 릴레이 요청에 대한 응답
 message RelayMessageResponse {
   bool success = 1;           // 전송 성공 여부
@@ -35,4 +45,6 @@ message RelayMessageResponse {
 service RelayMessageService {
   // 단일 메시지 릴레이 (서버 → 서버)
   rpc relayMessage (RelayMessageRequest) returns (RelayMessageResponse);
+  // 벌크 메시지 릴레이
+  rpc relayBulkMessage (RelayBulkMessageRequest) returns (RelayMessageResponse);
 }

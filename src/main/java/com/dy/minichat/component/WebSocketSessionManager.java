@@ -6,6 +6,13 @@ import org.springframework.web.socket.WebSocketSession;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+
+/*
+
+    stateful -> before & after state different
+    ConcurrentHashMap -> asychronized proccess is neccessary!!
+
+ */
 @Component
 public class WebSocketSessionManager {
     private final Map<Long, WebSocketSession> sessions = new ConcurrentHashMap<>();

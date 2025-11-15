@@ -93,7 +93,8 @@ public class UserBanService { // UserBanServiceCGlibProxy...
      * [호출] HandshakeInterceptor 또는 로그인 API
      * 사용자가 밴 상태인지 (임시 밴 or 영구 밴) 확인합니다.
      */
-    @Transactional(readOnly = true)
+    // @Transactional(readOnly = true)
+    @Transactional
     public boolean isUserBanned(Long userId) {
         if (userId == null) return true; // (정책) ID 없는 접근은 차단
         String tempBanKey = TEMP_BAN_KEY_PREFIX + userId;
