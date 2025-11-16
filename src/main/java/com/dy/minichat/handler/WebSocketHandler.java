@@ -205,94 +205,73 @@ public class WebSocketHandler extends TextWebSocketHandler {
          */
 
         // 각 유저 ID에 해당하는 WebSocketSession을 찾아 메시지 전송.
-        // [수정] 1. 수신자 그룹화: 로컬 / 원격(서버별) / 오프라인
-        Map<String, List<Long>> remoteRelayMap = new HashMap<>();
-        List<WebSocketSession> localSessions = new ArrayList<>();
-        List<Long> offlineUserList = new ArrayList<>();
-
-        for (Long userId : userIdsInChat) {
+        userIdsInChat.parallelStream().forEach(userId -> {
             WebSocketSession receiverSession = sessionManager.getSession(userId);
 
-            // Case 1: 같은 서버 (로컬 전송 대상)
+            // Case 1: 같은 서버 내에서 WebSocket 전송
             if (receiverSession != null && receiverSession.isOpen()) {
-                localSessions.add(receiverSession);
+                try {
+                    receiverSession.sendMessage(textMessage);
+                    log.info("로컬 메시지 전송 성공. 수신자 ID: {}", userId);
+
+                } catch (IOException e) {
+                    log.error("메시지 전송 실패. 수신자 ID: {}", userId, e);
+                }
             }
-            // Case 2: 다른 서버 또는 오프라인
             else {
                 String redisKey = USER_SERVER_KEY_PREFIX + userId;
                 String targetServerId = redisTemplateForString.opsForValue().get(redisKey);
 
-                // Case 2-A: 다른 서버 (gRPC 벌크 릴레이 대상)
+                // Case 2-1: 다른 서버에 연결 → gRPC 릴레이
                 if (targetServerId != null && !targetServerId.equals(serverIdentifier)) {
-                    remoteRelayMap
-                            .computeIfAbsent(targetServerId, k -> new ArrayList<>())
-                            .add(userId);
+                    log.info("다른 서버로 메시지 릴레이 시도. 수신자 ID: {}, 대상 서버: {}", userId, targetServerId);
+                    relayMessageViaGrpc(targetServerId, message, userId);
                 }
-                // Case 2-B: 오프라인 (FCM 대상)
+
+                // Case 2-2: 접속 정보 없음 → FCM
                 else {
-                    offlineUserList.add(userId);
+                    log.info("오프라인 사용자. FCM 알림 전송 시도. 수신자 ID: {}", userId);
+                    UndeliveredMessage undeliveredMessage = UndeliveredMessage.builder()
+                            .id(undeliveredMessageIdGenerator.generate())
+                            .chatId(chatId)
+                            .senderId(message.getSenderId())
+                            .receiverId(userId)
+                            .content(message.getContent())
+                            .build();
+                    undeliveredMessageRepository.save(undeliveredMessage);
+
+                    fcmPushService.sendPushNotification(userId, message);
                 }
+
+                // 나한테 웹소켓이 없는경우 or 아예 웹소켓이 연결되지 않은경우
+                /*
+                if (redis.exist(session){
+                    // targetServer.request(); -> server to server (grpc / http2)
+
+                    // grpcClient.relayMessage(relayMessageRequest);
+
+                    xxxxx.proto
+                    relayMessageRequest {
+                        ...
+                    }
+
+                    relayMessageResponse {
+                        ...
+                    }
+
+                    rpc relayMessage relayMessageRequest relayMessageResponse
+
+                    r
+
+                    // socket
+                    // http
+                    // grpc (http2) -> 한 번 적용해보기 !
+                } else {
+                    // FCM (ios push, android push) 99.99
+                }
+                */
             }
-        }
-
-        // [수정] 2. 그룹별 병렬 처리
-        //      (처리 1) 로컬 세션에 병렬 전송
-        localSessions.parallelStream().forEach(session -> {
-            try {
-                session.sendMessage(textMessage);
-            } catch (IOException e) {
-                log.error("로컬 메시지 전송 실패. 수신자 ID: {}", getUserIdFromSession(session).orElse(0L), e);
-            }
         });
-
-        //      (처리 2) 원격 서버에 벌크 gRPC 릴레이 (서버 수만큼만 호출)
-        remoteRelayMap.forEach((targetServerId, recipientIds) -> {
-            log.info("벌크 gRPC 릴레이 시도. 대상 서버: {}, 수신자 수: {}", targetServerId, recipientIds.size());
-            // [신규] 벌크 릴레이 헬퍼 호출
-            relayMessageViaGrpcBulk(targetServerId, message, recipientIds);
-        });
-
-        //      (처리 3) 오프라인 유저에게 FCM 병렬 전송
-        offlineUserList.parallelStream().forEach(userId -> {
-            log.info("오프라인 사용자. FCM 알림 전송 시도. 수신자 ID: {}", userId);
-            UndeliveredMessage undeliveredMessage = UndeliveredMessage.builder()
-                    .id(undeliveredMessageIdGenerator.generate())
-                    .chatId(chatId)
-                    .senderId(message.getSenderId())
-                    .receiverId(userId)
-                    .content(message.getContent())
-                    .build();
-            undeliveredMessageRepository.save(undeliveredMessage);
-
-            fcmPushService.sendPushNotification(userId, message);
-        });
-    }
-
-    /**
-     * [신규] 벌크 gRPC 릴레이를 위한 헬퍼 메서드
-     */
-    private void relayMessageViaGrpcBulk(String targetServerId, TalkMessageDTO messageDTO, List<Long> recipientIds) {
-        // 1. 설정에서 서버 주소록을 가져오기
-        Map<String, String> addresses = grpcServerProperties.getAddresses();
-        String targetAddress = addresses.get(targetServerId);
-
-        if (targetAddress == null || targetAddress.isEmpty()) {
-            log.error("gRPC 벌크 릴레이 실패: 대상 서버 '{}'의 주소를 찾을 수 없습니다.", targetServerId);
-            return;
-        }
-
-        try {
-            // 2. 주소를 host와 port로 분리
-            String[] parts = targetAddress.split(":");
-            String host = parts[0];
-            int port = Integer.parseInt(parts[1]);
-
-            // 3. MessageRelayClient의 [신규] 벌크 메서드 호출
-            messageRelayClient.relayBulkMessageToServer(host, port, messageDTO, recipientIds);
-
-        } catch (Exception e) {
-            log.error("gRPC 벌크 릴레이 중 예상치 못한 에러 발생. 대상 서버: {}", targetServerId, e);
-        }
     }
 
     @Override

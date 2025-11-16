@@ -1,7 +1,9 @@
 package com.dy.minichat.repository;
 
 import com.dy.minichat.entity.UserChat;
+import com.dy.minichat.entity.Message;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -22,16 +24,16 @@ public interface UserChatRepository extends JpaRepository<UserChat, Long> {
 //     * 마지막으로 읽은 메시지를 조건부로 업데이트합니다.
 //     * @return 업데이트된 행(row)의 수
 //     */
-//    @Modifying // UPDATE, DELETE 쿼리 실행 시 필요
-//    @Query("UPDATE UserChat uc " +
-//            "SET uc.lastReadMessage = :lastMessage " +
-//            "WHERE uc.user.id = :userId AND uc.chat.id = :chatId AND uc.isDeleted = false " +
-//            "AND (uc.lastReadMessage IS NULL OR uc.lastReadMessage.id < :lastMessageId)")
-//    int updateLastReadMessageConditionally(
-//            @Param("userId") Long userId,
-//            @Param("chatId") Long chatId,
-//            @Param("lastMessage") Message lastMessage,
-//            @Param("lastMessageId") Long lastMessageId);
+    @Modifying // UPDATE, DELETE 쿼리 실행 시 필요
+    @Query("UPDATE UserChat uc " +
+            "SET uc.lastReadMessage = :lastMessage " +
+            "WHERE uc.user.id = :userId AND uc.chat.id = :chatId AND uc.isDeleted = false " +
+            "AND (uc.lastReadMessage IS NULL OR uc.lastReadMessage.id < :lastMessageId)")
+    int updateLastReadMessageConditionally (
+            @Param("userId") Long userId,
+            @Param("chatId") Long chatId,
+            @Param("lastMessage") Message lastMessage,
+            @Param("lastMessageId") Long lastMessageId);
 
     // leaveChatRoom에서 사용
     // find 할 때 메소드 명을 findActiveUserChat -> isDeletedFalse 보다 더 직관적
@@ -58,11 +60,6 @@ public interface UserChatRepository extends JpaRepository<UserChat, Long> {
             "WHERE uc.user.id = :userId AND uc.isDeleted = false " +
             "ORDER BY uc.lastMessageTimestamp DESC") // 정렬은 timestamp로
     List<UserChat> findAllByUserIdOrderByLastMessageTimestampDesc(@Param("userId") Long userId);
-
-    /*
-        UserChatUpdateService 에서 사용
-     */
-    // List<UserChat> findAllByChatIdAndIsDeletedFalse(Long chatId);
 
     // [추가] 특정 채팅방에 속한 모든 사용자의 ID 목록만 조회 쿼리
     @Query("SELECT uc.user.id FROM UserChat uc WHERE uc.chat.id = :chatId AND uc.isDeleted = false")

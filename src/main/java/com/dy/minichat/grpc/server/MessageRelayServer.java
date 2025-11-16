@@ -67,66 +67,10 @@ public class MessageRelayServer extends RelayMessageServiceGrpc.RelayMessageServ
         }
     }
 
-    private String buildMessagePayload(RelayMessageRequest request) throws JsonProcessingException {
-        Map<String, Object> payloadMap = Map.of(
-                "type", request.getMessageType(),
-                "senderId", request.getSenderId(),
-                "chatId", request.getChatId(),
-                "content", request.getContent(),
-                "timestamp", Instant.parse(request.getTimestamp())
-        );
-        return objectMapper.writeValueAsString(payloadMap);
-    }
-
-    /**
-     * [신규] 벌크 릴레이 RPC 구현
-     */
-    @Override
-    public void relayBulkMessage(RelayBulkMessageRequest request, StreamObserver<RelayMessageResponse> responseObserver) {
-        log.info("gRPC relayBulkMessage 요청 수신: {} 명", request.getRecipientIdsCount());
-
-        String messagePayload;
-        try {
-            // 메시지 페이로드는 한 번만 생성
-            messagePayload = buildMessagePayload(request);
-        } catch (JsonProcessingException e) {
-            log.error("gRPC Bulk -> WebSocket 페이로드 빌드 실패", e);
-            responseObserver.onError(e);
-            return;
-        }
-
-        TextMessage textMessage = new TextMessage(messagePayload);
-        int successCount = 0;
-
-        // [핵심] 수신된 ID 목록을 순회하며 *로컬 세션*에 전송
-        for (Long recipientId : request.getRecipientIdsList()) {
-            WebSocketSession receiverSession = sessionManager.getSession(recipientId);
-
-            if (receiverSession != null && receiverSession.isOpen()) {
-                try {
-                    receiverSession.sendMessage(textMessage);
-                    successCount++;
-                } catch (IOException e) {
-                    log.warn("gRPC Bulk -> WebSocket 메시지 전송 실패. 수신자 ID: {}", recipientId, e);
-                }
-            } else {
-                log.warn("메시지를 수신할 세션이 없습니다 (벌크). 수신자 ID: {}", recipientId);
-            }
-        }
-
-        log.info("gRPC Bulk 릴레이 완료. 총 {}명 중 {}명에게 로컬 전송 성공.", request.getRecipientIdsCount(), successCount);
-
-        RelayMessageResponse response = RelayMessageResponse.newBuilder()
-                .setSuccess(true)
-                .setMessage("Message relayed to " + successCount + " users locally.")
-                .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
-    }
-
-
     // gRPC Request 객체로부터 WebSocket으로 보낼 JSON 문자열을 생성하는 헬퍼 메서드
-    private String buildMessagePayload(RelayBulkMessageRequest request) throws JsonProcessingException {
+    private String buildMessagePayload(RelayMessageRequest request) throws JsonProcessingException {
+        // TalkMessageDTO와 유사한 구조의 Map 또는 객체를 만들어 JSON으로 변환
+        // protobuf의 timestamp는 String이므로 Instant로 파싱
         Map<String, Object> payloadMap = Map.of(
                 "type", request.getMessageType(),
                 "senderId", request.getSenderId(),

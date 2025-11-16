@@ -91,41 +91,32 @@ public class MessageService {
     private final RedisScript<Long> lastReadUpdateScript;
 
     // == 메세지 읽음 상태 업데이트 API == //
+    /*
+     * [개선 전 O(1) DB UPDATE 버전] - JMeter 'Before' 테스트용
+     * 메세지 읽음 상태 업데이트 API
+     */
+    @Transactional // ◀ @Modifying 쿼리를 호출하려면 트랜잭션이 필수
     public void updateLastReadMessage (LastReadMessageRequestDTO dto, Long curUserId, Long chatId) {
 
-        String LAST_READ_KEY = "lastRead:user:%d:chat:%d";
-        String DIRTY_SET_KEY = "lastRead:dirty_keys";
-
+        // 1. DTO에서 Message 엔티티 조회 (DB 1회 SELECT)
         Message lastMessage = messageRepository.findById(dto.getLastMessageId())
                 .orElseThrow(() -> new IllegalArgumentException("메시지를 찾을 수 없습니다."));
 
-        // [수정 1] findByUserIdAndChatId에 비관적 락이 적용되어 동시성 문제 방지
-        // [수정 2] 비관적락의 비효율성으로 인한 추가 수정 -> 쿼리를 통한 최적화
-
-        try {
-            Long result = redisTemplateForString.execute(
-                    lastReadUpdateScript,
-                    List.of(LAST_READ_KEY, DIRTY_SET_KEY),
-                    lastMessage.getId().toString()
-            );
-
-            if (result != null && result == 1L) {
-                log.info("✅ [Lua-Atomic] user={}, chat={}, lastMessageId={}", curUserId, chatId, lastMessage.getId());
-            } else {
-                log.info("ℹ️ [Skipped] 기존 메시지보다 작거나 동일한 ID → 업데이트 안함");
-            }
-
-        } catch (Exception e) {
-            log.error("❌ Redis Lua script failed for user={}, chat={}, error={}", curUserId, chatId, e.getMessage());
-        }
+        // 2. DB에 조건부 업데이트 쿼리 실행 (DB 1회 UPDATE)
+        userChatRepository.updateLastReadMessageConditionally(
+                curUserId,
+                chatId,
+                lastMessage,
+                lastMessage.getId()
+        );
     }
-    // @Query(update userchat last_read_message_id = 11 ... last_read_message_id < 11)
 
-    // @Query(update userchat last_read_message_id = 10 ... last_read_Message_id < 10)
-
-    // update age = age +1 where month = 4;
 
     // == 메세지 목록  및 안 읽은 사람 수 반환 API == O ( M + N ) == //
+    /**
+     * [개선 전 O(N*M) 버전] - JMeter 'Before' 테스트용
+     * 메시지 목록 및 안 읽은 사람 수 반환 (비효율적인 중첩 탐색)
+     */
     // @Transactional(readOnly = true)
     public List<MessageResponseDTO> getMessageListWithUnreadCounts(Long chatId, Long userId) {
 
@@ -133,113 +124,67 @@ public class MessageService {
                 .orElseThrow(() -> new IllegalArgumentException("채팅방 참여 정보를 찾을 수 없습니다."));
         LocalDateTime joinTimestamp = userChat.getCreatedAt();
 
-        // 조회된 joinTimestamp를 사용해 "보여줄 메시지만 필터링" -> 유저가 참가하고 난 이후의 메시지만 반환
+        // M개의 메시지 조회 (O(M))
         List<Message> messages = messageRepository.findByChatIdAndCreatedAtAfterOrderByCreatedAtAscWithUser(chatId, joinTimestamp);
-
         if (messages.isEmpty()) return new ArrayList<>();
 
-        // 메세지 안읽은 사람 수 계산을 위한 참가자 정보 조회
+        // N명의 참여자 정보 조회 (O(N))
         List<UserChat> participants = userChatRepository.findByChatIdAndIsDeletedFalseWithLastReadMessage(chatId);
+        long totalParticipants = participants.size();
 
-        /*
-            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            앞에서 updateLastReadMessage 를 업데이트할 때 레디스 캐싱을 사용했으니,
-            여기서도 그에 때른 레디스 조회 로직으로 수정해야함
-            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        */
-
-
-        /*
-            어떤 메시지를 몇 명이 마지막으로 읽었는지
-            lastReadMessageId가 각각 (101, 103, 103, 105, 105)
-            readCountMap : {101: 1L, 103: 2L, 105: 2L}
-            => messageId 101 : 1명 , messageId 103 : 2명...
-            ===> readCntMap를 그냥 client에 줘버리기 -> 더 효율적일수도 있음.
-                클라이언트에서 핸들링하기 더 쉬움
-        */
-        /*
-            [단계 1]
-            // key: lastReadMessageId, value: 해당 ID까지 읽은 사람의 수
-            Map<Long, Long> readCntMap = participants.stream()
-                .filter(p -> p.getLastReadMessage() != null)
-                .collect(Collectors.groupingBy(p -> p.getLastReadMessage().getId(), Collectors.counting()));
-            [단계 2] - 레디스 전환
-            Map<Long, Long> userLastReadMap = new HashMap<>();
-            for (UserChat participant : participants) {
-                Long participantId = participant.getUser().getId();
-                String redisKey = String.format("lastRead:user:%d:chat:%d", participantId, chatId);
-                String redisValue = redisTemplateForString.opsForValue().get(redisKey);
-
-                Long lastReadId = null;
-                if (redisValue != null) {
-                    lastReadId = Long.parseLong(redisValue);
-                } else if (participant.getLastReadMessage() != null) {
-                    // fallback: Redis에 없을 경우 DB 값 사용
-                    lastReadId = participant.getLastReadMessage().getId();
-                }
-
-                if (lastReadId != null) {
-                    userLastReadMap.put(participantId, lastReadId);
-                }
-            }
-        */
-
-        // Redis에서 각 참여자의 lastReadMessageId 가져오기 => 레디스 N + 1 발생 : 레디스에서의 시간복잡도는 바로 네트워크에 영향이 가서 매우 잘 고려해야함 => MGET(pipeline 하위버전)!! 1번!!
+        // N명의 마지막 읽은 ID 조회 (O(N) - MGET 1회 + N번 순회)
         List<String> redisKeys = participants.stream()
                 .map(p -> String.format("lastRead:user:%d:chat:%d", p.getUser().getId(), chatId))
                 .toList();
-
-        // MGET으로 일괄 조회
-        // MGET 이 안될 때 redispipeline 사용
         List<String> redisValues = redisTemplateForString.opsForValue().multiGet(redisKeys);
 
-        Map<Long, Long> userLastReadMap = new HashMap<>();
+        // N명의 '마지막 읽은 ID' 리스트 생성 (DB Fallback 포함)
+        List<Long> participantLastReadIds = new ArrayList<>();
         for (int i = 0; i < participants.size(); i++) {
             UserChat participant = participants.get(i);
             String redisValue = redisValues.get(i);
-
             Long lastReadId = null;
+
             if (redisValue != null) {
                 lastReadId = Long.parseLong(redisValue);
             } else if (participant.getLastReadMessage() != null) {
-                // fallback
                 lastReadId = participant.getLastReadMessage().getId();
             }
 
-            if (lastReadId != null) {
-                userLastReadMap.put(participant.getUser().getId(), lastReadId);
-            }
+            // [참고] '개선 전' 코드는 null (아직 한 번도 안 읽음)인 경우를 0L로 처리합니다.
+            participantLastReadIds.add(lastReadId != null ? lastReadId : 0L);
         }
 
-        // 4 messageId별 읽은 인원 수 집계
-        Map<Long, Long> readCntMap = userLastReadMap.values().stream()
-                .collect(Collectors.groupingBy(id -> id, Collectors.counting()));
-
-        // 누적 읽은 사람 수
+        // --- 2. O(N*M) 중첩 탐색 로직 ---
         List<MessageResponseDTO> resultList = new ArrayList<>();
-        long totalParticipants = participants.size();
-        long cumulativeReadCnt = 0; // 현재까지 '읽은' 사람의 누적 합계
 
-        for (Message message : messages) {  // 시간순으로 정렬된 메시지
+        // O(M) - 바깥쪽 루프 (모든 메시지 순회)
+        for (Message message : messages) {
             long messageId = message.getId();
+            int readCount = 0; // "이 메시지를 읽은 사람 수"
 
-            if (readCntMap.containsKey(messageId))
-                cumulativeReadCnt += readCntMap.get(messageId);
+            // O(N) - 안쪽 루프 (모든 참여자 순회)
+            // "이 메시지(messageId)를 N명의 참여자 중 몇 명이 읽었는가?"
+            for (Long lastReadId : participantLastReadIds) {
 
-            long unreadCnt = totalParticipants - cumulativeReadCnt;
+                // 이 참여자가 마지막으로 읽은 ID가 현재 메시지 ID보다 *같거나 크면*
+                // 이 참여자는 현재 메시지를 *읽었다*.
+                if (lastReadId >= messageId) {
+                    readCount++;
+                }
+            }
 
+            // 안 읽은 사람 수 = (전체 참여자 수) - (이 메시지를 읽은 사람 수)
+            int unreadCnt = (int) (totalParticipants - readCount);
+
+            // --- 3. DTO 변환 (동일) ---
             Long senderId;
             String senderName;
-
-            // 메시지 타입 확인
-            //      일반 대화(TALK) 메시지 => 실제 유저 정보 사용
             if (message.getMessageType() == MessageType.TALK) {
                 senderId = message.getUser().getId();
                 senderName = message.getUser().getName();
-            }
-            //      시스템 메시지(SYSTEM_ENTRY, SYSTEM_LEAVE 등) => 약속된 시스템 ID 사용
-            else {
-                senderId = 0L; // 시스템 유저 ID
+            } else {
+                senderId = 0L;
                 senderName = "SYSTEM";
             }
 
@@ -250,7 +195,7 @@ public class MessageService {
                     message.getChat().getId(),
                     message.getContent(),
                     message.getMessageType(),
-                    (int) unreadCnt
+                    unreadCnt
             ));
         }
 
