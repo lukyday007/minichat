@@ -1,6 +1,8 @@
 package com.dy.minichat.config.replica;
 
+import com.dy.minichat.component.replica.RoutingDataSource;
 import com.dy.minichat.property.DataSourceProperty;
+import com.dy.minichat.component.replica.MasterReplicaKeyRouter;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import lombok.RequiredArgsConstructor;
