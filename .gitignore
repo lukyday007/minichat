@@ -39,3 +39,5 @@ out/
 ### Firebase service account key ###
 src/main/resources/firebase/firebase-service-account.json
 
+src/test/resources/application-test.yml
+minichat-compose.yml

@@ -30,6 +30,7 @@ public class DataSourceConfig {
         config.setDriverClassName("com.mysql.cj.jdbc.Driver");
         config.setMaximumPoolSize(20);
         config.setMinimumIdle(20);
+        config.setInitializationFailTimeout(-1); // DB 준비될 때까지 기다림
         return new HikariDataSource(config);
     }
 
