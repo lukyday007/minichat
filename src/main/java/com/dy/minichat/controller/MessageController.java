@@ -34,9 +34,11 @@ public class MessageController {
     @GetMapping("/chats/{chatId}/messages")
     public ResponseEntity<List<MessageResponseDTO>> getMessageListWithUnreadCounts (
             @PathVariable Long chatId,
-            @AuthenticationPrincipal Long userId
+            @AuthenticationPrincipal Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
     ) {
-        List<MessageResponseDTO> data = messageService.getMessageListWithUnreadCounts(chatId, userId);
+        List<MessageResponseDTO> data = messageService.getMessageListWithUnreadCounts(chatId, userId, page, size);
         return ResponseEntity.status(200).body(data);
     }
 

@@ -13,6 +13,10 @@ import com.dy.minichat.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
@@ -127,26 +131,32 @@ public class MessageService {
 
     // == 메세지 목록  및 안 읽은 사람 수 반환 API == O ( M + N ) == //
     // @Transactional(readOnly = true)
-    public List<MessageResponseDTO> getMessageListWithUnreadCounts(Long chatId, Long userId) {
+    public List<MessageResponseDTO> getMessageListWithUnreadCounts(Long chatId, Long userId, int page, int size) {
 
         UserChat userChat = userChatRepository.findReadVersionByUserIdAndChatIdAndIsDeletedFalse(userId, chatId)
                 .orElseThrow(() -> new IllegalArgumentException("채팅방 참여 정보를 찾을 수 없습니다."));
         LocalDateTime joinTimestamp = userChat.getCreatedAt();
 
-        // 조회된 joinTimestamp를 사용해 "보여줄 메시지만 필터링" -> 유저가 참가하고 난 이후의 메시지만 반환
-        List<Message> messages = messageRepository.findByChatIdAndCreatedAtAfterOrderByCreatedAtAscWithUser(chatId, joinTimestamp);
+        // --- I/O 병목 해결 핵심: Pageable 객체 생성 ---
+        Pageable pageable = PageRequest.of(
+                page,
+                size,
+                Sort.by(Sort.Direction.ASC, "createdAt")
+        );
+
+        // M개의 메시지 조회
+        Page<Message> messagePage = messageRepository.findByChatIdAndCreatedAtAfter(
+                chatId,
+                joinTimestamp,
+                pageable
+        );
+
+        // 실제 메시지 리스트를 가져와 기존 O(N+M) 로직에 사용
+        List<Message> messages = messagePage.getContent();
 
         if (messages.isEmpty()) return new ArrayList<>();
-
         // 메세지 안읽은 사람 수 계산을 위한 참가자 정보 조회
         List<UserChat> participants = userChatRepository.findByChatIdAndIsDeletedFalseWithLastReadMessage(chatId);
-
-        /*
-            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            앞에서 updateLastReadMessage 를 업데이트할 때 레디스 캐싱을 사용했으니,
-            여기서도 그에 때른 레디스 조회 로직으로 수정해야함
-            !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        */
 
 
         /*
@@ -156,32 +166,6 @@ public class MessageService {
             => messageId 101 : 1명 , messageId 103 : 2명...
             ===> readCntMap를 그냥 client에 줘버리기 -> 더 효율적일수도 있음.
                 클라이언트에서 핸들링하기 더 쉬움
-        */
-        /*
-            [단계 1]
-            // key: lastReadMessageId, value: 해당 ID까지 읽은 사람의 수
-            Map<Long, Long> readCntMap = participants.stream()
-                .filter(p -> p.getLastReadMessage() != null)
-                .collect(Collectors.groupingBy(p -> p.getLastReadMessage().getId(), Collectors.counting()));
-            [단계 2] - 레디스 전환
-            Map<Long, Long> userLastReadMap = new HashMap<>();
-            for (UserChat participant : participants) {
-                Long participantId = participant.getUser().getId();
-                String redisKey = String.format("lastRead:user:%d:chat:%d", participantId, chatId);
-                String redisValue = redisTemplateForString.opsForValue().get(redisKey);
-
-                Long lastReadId = null;
-                if (redisValue != null) {
-                    lastReadId = Long.parseLong(redisValue);
-                } else if (participant.getLastReadMessage() != null) {
-                    // fallback: Redis에 없을 경우 DB 값 사용
-                    lastReadId = participant.getLastReadMessage().getId();
-                }
-
-                if (lastReadId != null) {
-                    userLastReadMap.put(participantId, lastReadId);
-                }
-            }
         */
 
         // Redis에서 각 참여자의 lastReadMessageId 가져오기 => 레디스 N + 1 발생 : 레디스에서의 시간복잡도는 바로 네트워크에 영향이 가서 매우 잘 고려해야함 => MGET(pipeline 하위버전)!! 1번!!
