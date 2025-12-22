@@ -5,7 +5,7 @@
 <br>
 
 ## 🛠 Architecture
-<img src="img/minichat-architecture.png" width="800" alt="Minichat Architecture">
+<img src="img/minichat-architecture.jpg" width="800" alt="Minichat Architecture">
 
 <br>
 
