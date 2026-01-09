@@ -19,13 +19,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.util.concurrent.Executor;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -179,6 +179,9 @@ public class WebSocketHandler extends TextWebSocketHandler {
         sendMessageToChatRoom(message);
     }
 
+    @Qualifier("customThreadPool")
+    private final Executor executor;
+
     // 특정 채팅방에 메시지를 방송하는 헬퍼 메서드
     private void sendMessageToChatRoom(TalkMessageDTO message) {
         Long chatId = message.getChatId();
@@ -235,14 +238,15 @@ public class WebSocketHandler extends TextWebSocketHandler {
             }
         }
 
-        // [수정] 2. 그룹별 병렬 처리
         //      (처리 1) 로컬 세션에 병렬 전송
-        localSessions.parallelStream().forEach(session -> {
-            try {
-                session.sendMessage(textMessage);
-            } catch (IOException e) {
-                log.error("로컬 메시지 전송 실패. 수신자 ID: {}", getUserIdFromSession(session).orElse(0L), e);
-            }
+        localSessions.forEach(session -> {
+            executor.execute(() -> {
+                try {
+                    session.sendMessage(textMessage);
+                } catch (IOException e) {
+                    log.error("로컬 전송 실패. 수신자 ID: {}", getUserIdFromSession(session).orElse(0L), e);
+                }
+            });
         });
 
         //      (처리 2) 원격 서버에 벌크 gRPC 릴레이 (서버 수만큼만 호출)
@@ -253,19 +257,28 @@ public class WebSocketHandler extends TextWebSocketHandler {
         });
 
         //      (처리 3) 오프라인 유저에게 FCM 병렬 전송
-        offlineUserList.parallelStream().forEach(userId -> {
-            log.info("오프라인 사용자. FCM 알림 전송 시도. 수신자 ID: {}", userId);
-            UndeliveredMessage undeliveredMessage = UndeliveredMessage.builder()
-                    .id(undeliveredMessageIdGenerator.generate())
-                    .chatId(chatId)
-                    .senderId(message.getSenderId())
-                    .receiverId(userId)
-                    .content(message.getContent())
-                    .build();
-            undeliveredMessageRepository.save(undeliveredMessage);
-
-            fcmPushService.sendPushNotification(userId, message);
+        offlineUserList.forEach(userId -> {
+            executor.execute(() -> {
+                log.info("FCM 알림 시도: 유저 {}", userId);
+                // DB 저장 및 푸시 전송
+                saveUndeliveredAndSendPush(chatId, userId, message);
+            });
         });
+    }
+
+    /**
+     * [신규] FCM 처리 헬퍼 메서드
+     */
+    private void saveUndeliveredAndSendPush(Long chatId, Long userId, TalkMessageDTO message) {
+        UndeliveredMessage undelivered = UndeliveredMessage.builder()
+                .id(undeliveredMessageIdGenerator.generate())
+                .chatId(chatId)
+                .senderId(message.getSenderId())
+                .receiverId(userId)
+                .content(message.getContent())
+                .build();
+        undeliveredMessageRepository.save(undelivered);
+        fcmPushService.sendPushNotification(userId, message);
     }
 
     /**

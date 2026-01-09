@@ -15,13 +15,12 @@ public class ThreadPoolConfig {
     @Bean(name = "customThreadPool")
     public Executor customThreadPool() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(10);
-        executor.setMaxPoolSize(20);
-        executor.setQueueCapacity(100);
-        executor.setThreadNamePrefix("Custom-Async-");
+        executor.setCorePoolSize(30);
+        executor.setMaxPoolSize(200);
+        executor.setQueueCapacity(1000);
+        executor.setThreadNamePrefix("Msg-Async-");
 
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-
         executor.initialize();
         return executor;
     }
