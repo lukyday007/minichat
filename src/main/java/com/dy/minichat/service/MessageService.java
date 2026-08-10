@@ -145,17 +145,13 @@ public class MessageService {
 
         // redis 장애 격리
         try {
-            Long result = redisTemplateForString.execute(
+            redisTemplateForString.execute(
                     lastReadUpdateScript,
                     List.of(LAST_READ_KEY, DIRTY_SET_KEY),
                     lastMessageId.toString()
             );
 
-            // Redis 반환값 null 상태 방어
-            if (result == null) {
-                log.warn("[Lua-Atomic Result Null] Redis 응답이 비어있습니다. 업데이트 불명확. user={}, chat={}", curUserId, chatId);
-                return;
-            }
+
         } catch (Exception e) {
             log.error("Redis Lua script failed for user={}, chat={}, error={}", curUserId, chatId, e.getMessage());
         }
@@ -218,7 +214,7 @@ public class MessageService {
                 .collect(Collectors.groupingBy(id -> id, Collectors.counting()));
 
         // 메시지별 안읽은 수 누적 계산 후 DTO 조립
-        return assembleMessageResponses(messages, participants.size(), readCntMap, chatId);
+        return assembleMessageResponses(messages, readCntMap, chatId);
     }
 
     /*
@@ -250,7 +246,7 @@ public class MessageService {
 
         // Redis 응답이 null이거나 원본 참가자 리스트와 사이즈가 불일치할 경우를 대비한 무결성 동기화
         if (redisValues == null || redisValues.size() != participants.size()) {
-            redisValues = new ArrayList<>(Collections.nCopies(participants.size(), (String) null));
+            redisValues = new ArrayList<>(Collections.nCopies(participants.size(), null));
         }
 
         Map<Long, Long> userLastReadMap = new HashMap<>();
@@ -282,20 +278,19 @@ public class MessageService {
     }
 
     private List<MessageResponseDTO> assembleMessageResponses(
-            List<Message> messages, long totalParticipants, Map<Long, Long> readCntMap, Long chatId) {
+            List<Message> messages, Map<Long, Long> readCntMap, Long chatId) {
 
         List<MessageResponseDTO> resultList = new ArrayList<>();
-        long cumulativeReadCnt = 0; // 현재까지 '읽은' 사람의 누적 합계
+        long cumulativeNotReadCnt = 0; // 현재까지 '안 읽은' 사람의 누적 합계
 
         for (Message message : messages) {  // 시간순으로 정렬된 메시지
             if (message == null) continue; // 리스트 내부 null 요소 방어
 
             long messageId = message.getId();
+            long unreadCnt = cumulativeNotReadCnt;
 
             if (readCntMap.containsKey(messageId))
-                cumulativeReadCnt += readCntMap.get(messageId);
-
-            long unreadCnt = totalParticipants - cumulativeReadCnt;
+                cumulativeNotReadCnt += readCntMap.get(messageId);
 
             // 데이터 왜곡으로 인해 읽은 사람 수가 총원보다 많아져 음수가 나오는 현상 방어
             if (unreadCnt < 0) {
